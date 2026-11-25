@@ -1,0 +1,12 @@
+[package]
+name = "plugin-probe"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "probe"
+crate-type = ["cdylib"]
+
+[dependencies]
+mett-plugin = { path = "../mett-plugin" }

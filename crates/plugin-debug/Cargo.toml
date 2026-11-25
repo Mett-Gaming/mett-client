@@ -1,0 +1,13 @@
+[package]
+name = "plugin-debug"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "debug"
+crate-type = ["cdylib"]
+
+[dependencies]
+mett-plugin = { path = "../mett-plugin" }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }

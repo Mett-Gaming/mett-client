@@ -1,0 +1,14 @@
+[package]
+name = "plugin-zoom"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "zoom"
+crate-type = ["cdylib"]
+
+[dependencies]
+hud = { path = "../hud" }
+mett-plugin = { path = "../mett-plugin" }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_SystemInformation", "Win32_System_Threading"] }

@@ -1,0 +1,9 @@
+[package]
+name = "hud"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+png = "0.17"

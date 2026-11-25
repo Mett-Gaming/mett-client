@@ -1,0 +1,13 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Mett-Client",
+    "description": "Knopf für Mett-Client im Pausenmenü",
+    "uuid": "c40bdbf2-1bab-44f7-b201-afbfe8e2286d",
+    "version": [ 0, 1, 4 ],
+    "min_engine_version": [ 1, 21, 120 ]
+  },
+  "modules": [
+    { "type": "resources", "uuid": "3273700a-42b8-4503-9bd3-3e045447edc6", "version": [ 0, 1, 4 ] }
+  ]
+}

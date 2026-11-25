@@ -1,0 +1,6 @@
+/target
+/.cargo/config.toml
+*.log
+__pycache__/
+/dist/
+/tools/sendesuche/

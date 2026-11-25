@@ -1,0 +1,21 @@
+# Regeln für Mett-Client
+
+- Sprache: Deutsch. Einträge beginnen mit einem passenden Emoji.
+- **Updates von Bedrock dürfen nur die betroffene Funktion treffen.**
+  - **Nichts mehr als Overlay** (Entscheidung des Nutzers, `docs/nativ.md`): Anzeige, Menü und Chat laufen als Plugins im Spiel. Zeichnen und Eingaben hängen nur an Windows-Schnittstellen (DXGI, Fensternachrichten), nicht an Spieladressen. Der Client entscheidet, das HUD-Plugin zeigt an und meldet Eingaben; ohne Lebenszeichen des Clients gibt es alles frei.
+  - Jede versionsabhängige Funktion hat eigene Muster in `compat`, wird bei jedem Spielstart geprüft und fällt einzeln aus.
+  - **Einstieg immer über Namen, die im laufenden Spiel lesbar sind** (Klassennamen, Knopfkennungen), nie über feste Adressen oder Abstände im Programm. Adressen gelten nur für den laufenden Prozess und werden nicht gespeichert. Laufende Nummern in Namen (`lambda_73`) zählen nicht als Name.
+  - Nicht eindeutig gefunden heißt aus. Nie raten, nie alte Adressen weiterbenutzen.
+  - Im Menü steht je Funktion, ob sie läuft und warum nicht.
+- **Alles von Mett nur beim Start über den Mett Launcher** (`--launcher`): HUD, Knöpfe, Pack, Link, Mini-Modul. Kein Autostart, nichts bleibt nach dem Spiel zurück; nur Einstellungen bleiben. `--dev` ist für die Entwicklung und installiert nichts.
+- `gamemem` ist der einzige Ort mit Prozesszugriff und liest nur.
+- Loader nach Vorbild SKSE (`docs/loader.md`): Kern ohne Hooks, jede Funktion ein eigenes Plugin, erst fragen, dann laden. Plugins nur aus dem eigenen Ordner und nur, wenn eingeschaltet.
+- Nur `mett-inject` schreibt in fremde Prozesse (Kern laden, Plugins starten und stoppen).
+- Plugins: jede Funktion einzeln abschaltbar. HUD und Menü gehören zum Umfang; Eingriffe ins Spiel darüber hinaus sind standardmäßig aus. Umfang dieser Eingriffe: Bildschirmerkennung, Zoom, Crosshair ausblenden, Fullbright und der Mett-Chat (empfangen, senden, Vanilla-Chat ausblenden). Der Chat kam auf ausdrücklichen Wunsch dazu; die frühere Grenze von 4 Hooks gilt für ihn nicht. Mehr nur nach Rückfrage.
+- Der Mett-Chat sendet nur, was der Nutzer selbst eingibt und abschickt. Kein automatisches Senden. Nachrichten werden nicht gespeichert.
+- Kein Treiber, kein Umgehen von Schutzmechanismen oder Anti-Cheat, keine Tarnung.
+  - Klarstellung des Nutzers (25.11.2026): Schrifttafeln (`font/glyph_XX`), die Minecraft zum Anzeigen schon ausgepackt im Arbeitsspeicher hat, dürfen im eigenen Chat gezeigt werden. Nur diese, nur im Arbeitsspeicher, nie auf der Platte, keine Weitergabe, keine Schlüssel, nichts entschlüsseln.
+- Keine Daten anderer Spieler: kein ESP, Radar, Reichweiten- oder Hitbox-Anzeige. Keine simulierten Eingaben.
+  - Ausnahme des Nutzers (25.11.2026): Das Tab-Menü zeigt Namen und Gesichter (8 × 8 Pixel aus dem Skin) aus Minecrafts Spielerliste. Nur das, nur solange die Taste gehalten wird, nur im Arbeitsspeicher, nichts wird gespeichert.
+- Eingaben werden nur gezählt, nie gespeichert.
+- Vor einem Eintrag: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.

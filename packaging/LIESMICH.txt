@@ -1,0 +1,19 @@
+Mett-Client
+===========
+HUD, Menü, Zoom, Chat-Anpassung und mehr direkt in Minecraft Bedrock (Windows).
+Inoffiziell, nicht mit Mojang oder Microsoft verbunden.
+
+STARTEN
+  Über den Mett Launcher. Er startet Minecraft gleich mit.
+  Nichts bleibt nach dem Spiel zurück, nur deine Einstellungen.
+
+BEDIENEN
+  Rechte Umschalttaste: HUD bearbeiten. Doppelt, oder zusammen mit der linken: Menü.
+  Esc: fertig.
+
+GUT ZU WISSEN
+  Mett-Client liest den Speicher von Minecraft und lädt eigene Plugins hinein.
+  Serverregeln können das verbieten, im schlimmsten Fall droht ein Bann.
+  Windows oder ein Virenscanner kann warnen, weil die Dateien nicht signiert sind.
+  Nach einem Minecraft-Update kann eine Funktion ausfallen; im Menü steht, welche.
+  Getestet mit Minecraft 1.26.65.1.

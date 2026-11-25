@@ -1,0 +1,44 @@
+# Prüft bei jedem Hochladen. Eine Marke "v*" baut zusätzlich das Zip und legt die Veröffentlichung an.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Prüfen
+        run: |
+          cargo fmt --check
+          if ($LASTEXITCODE) { exit 1 }
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+      - name: Bauen und packen
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: tools/packen.ps1 -Version $env:GITHUB_REF_NAME
+      - name: Veröffentlichung anlegen
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $extra = @()
+          if ($env:GITHUB_REF_NAME -match '-') { $extra += '--prerelease' }
+          gh release create $env:GITHUB_REF_NAME "dist/MettClient-$env:GITHUB_REF_NAME.zip" --title "Mett-Client $env:GITHUB_REF_NAME" --generate-notes @extra
