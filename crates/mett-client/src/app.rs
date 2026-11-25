@@ -15,6 +15,7 @@ use crate::players_link::{self, PlayersLink};
 use crate::plugins::Plugins;
 use crate::screen::Screen;
 use crate::style_link::StyleLink;
+use crate::turn_link::TurnLink;
 use crate::value_link::ValueLink;
 use crate::window;
 use crate::zoom_link::ZoomLink;
@@ -82,6 +83,9 @@ pub struct App {
     cross: Option<CrossLink>,
     values: Option<ValueLink>,
     gear: Option<GearLink>,
+    turn: Option<TurnLink>,
+    /// Zuletzt gezeichnete Richtung.
+    drawn: Option<f32>,
     /// Tab wird beim Spielen gehalten.
     tab: bool,
     /// Das Pack dieses Spielstarts blendet Minecrafts Anzeige aus; dann gibt es nichts zu verschieben.
@@ -147,6 +151,8 @@ impl App {
             cross: plugins.clone().map(CrossLink::start),
             values: plugins.clone().map(ValueLink::start),
             gear: plugins.is_some().then(GearLink::start),
+            turn: plugins.is_some().then(TurnLink::start),
+            drawn: None,
             tab: false,
             link: plugins.map(ChatLink::start),
             pack_hides,
@@ -199,6 +205,14 @@ impl App {
 
     fn in_front(&self) -> bool {
         !self.game.is_invalid() && unsafe { GetForegroundWindow() } == self.game
+    }
+
+    /// Damit sich der Kompass weich bewegt: öfter zeichnen, aber nur wenn er sich dreht.
+    pub fn smooth(&mut self) {
+        let now = self.turn.as_ref().filter(|_| self.shown && self.editor.is_none()).and_then(TurnLink::degrees);
+        if now.is_some() && now != self.drawn {
+            self.paint();
+        }
     }
 
     fn chat_tick(&mut self) {
@@ -273,6 +287,11 @@ impl App {
             _ if !self.config.chat_history => "aus",
             _ => self.history,
         };
+        let turn = self.watcher.pid().filter(|_| self.module(Kind::Direction)).map(|pid| (pid, playing));
+        if let Some(l) = &mut self.turn {
+            l.want(turn);
+        }
+        let turn = self.turn.as_ref().map_or("nur beim Start über den Mett Launcher", TurnLink::state);
         let held = self.tab;
         let zoom = self.watcher.pid().filter(|_| self.module(Kind::Zoom)).map(|pid| (pid, self.config.zoom.sane()));
         if let Some(z) = &mut self.zoom {
@@ -290,6 +309,7 @@ impl App {
             e.apple_state = apple;
             e.cross_state = cross;
             e.bright_state = bright;
+            e.turn_state = turn;
             e.gear_states = gear;
             e.time = self.born.elapsed().as_secs_f32();
             e.style_state = style;
@@ -736,6 +756,7 @@ impl App {
             };
         }
         let mut scroll = (self.scroll.0, 0, 0);
+        let turned = self.turn.as_ref().filter(|_| self.module(Kind::Direction)).and_then(TurnLink::degrees);
         let p = self.config.profile();
         for (kind, at) in editor::items(p, screen, dpi, native) {
             let style = &p.style(kind);
@@ -791,6 +812,13 @@ impl App {
                     self.armor(None, (at.x, at.y), unit, &gear, &mut out);
                     continue;
                 }
+                Kind::Direction => {
+                    // Im Editor ein Beispiel, sonst nur mit echtem Wert.
+                    if let Some(d) = turned.or(sample.then_some(0.0)) {
+                        hud::compass::draw(at, style, d, &mut out);
+                    }
+                    continue;
+                }
                 Kind::Potions | Kind::Items => {
                     let rows = gear_rows(kind, &gear, &p.items, sample);
                     hud::gear::draw(at, kind.size(), style, &rows, &mut out);
@@ -821,6 +849,7 @@ impl App {
             hud::label(at, kind, style, &text, &mut out);
         }
         self.scroll = scroll;
+        self.drawn = turned;
         if p.modules[&Kind::Armor].enabled && p.armor.sticky && (sample || !self.in_menu || self.chat_open.is_some()) {
             let unit = java_chat::unit(screen);
             // Im Editor liegt die Leiste vielleicht unter einem Menü; dann dort, wo sie üblicherweise ist.
@@ -974,6 +1003,7 @@ impl App {
             format!("Spielerliste: {}, {}", on(Kind::Players), e.tab_state),
             format!("Armor HUD: {}, {}", on(Kind::Armor), e.gear_states[0]),
             format!("Effekte: {}, {}", on(Kind::Potions), e.gear_states[1]),
+            format!("Blickrichtung: {}, {}", on(Kind::Direction), e.turn_state),
         ]
         .join("\r\n")
     }

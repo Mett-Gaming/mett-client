@@ -54,6 +54,7 @@ pub struct Editor {
     pub apple_state: &'static str,
     pub cross_state: &'static str,
     pub bright_state: &'static str,
+    pub turn_state: &'static str,
     /// Gegenstände, Effekte.
     pub gear_states: [&'static str; 2],
     /// Sekunden, für bewegte Farben in der Vorschau.
@@ -137,6 +138,7 @@ impl Editor {
             apple_state: "aus",
             cross_state: "aus",
             bright_state: "aus",
+            turn_state: "aus",
             gear_states: ["aus"; 2],
             time: 0.0,
             picker: None,

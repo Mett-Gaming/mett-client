@@ -13,6 +13,7 @@ pub mod inventory;
 pub mod model;
 pub mod options;
 pub mod players;
+pub mod rotation;
 pub mod server;
 pub mod sheets;
 pub mod uisizes;

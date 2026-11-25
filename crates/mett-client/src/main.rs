@@ -24,6 +24,7 @@ mod plugins;
 mod screen;
 mod session;
 mod style_link;
+mod turn_link;
 mod value_link;
 mod window;
 mod zoom_link;

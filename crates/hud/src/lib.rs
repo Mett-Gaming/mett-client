@@ -6,6 +6,7 @@ pub mod appleskin;
 pub mod armor_hud;
 pub mod chat_input;
 pub mod color;
+pub mod compass;
 pub mod crosshair;
 pub mod editor;
 pub mod game_icons;
@@ -205,6 +206,7 @@ pub enum Kind {
     Armor,
     Potions,
     Items,
+    Direction,
 }
 
 /// Übliche Größe eines Textfelds; alle sind gleich hoch.
@@ -215,7 +217,7 @@ const TEXT_HEIGHT: f32 = 24.0;
 const TEXT_SCALE: f32 = 1.25;
 
 impl Kind {
-    pub const ALL: [Kind; 20] = [
+    pub const ALL: [Kind; 21] = [
         Kind::Keystrokes,
         Kind::Cps,
         Kind::Clock,
@@ -236,6 +238,7 @@ impl Kind {
         Kind::Armor,
         Kind::Potions,
         Kind::Items,
+        Kind::Direction,
     ];
 
     pub fn name(self) -> &'static str {
@@ -260,6 +263,7 @@ impl Kind {
             Kind::Armor => "Rüstung",
             Kind::Potions => "Effekte",
             Kind::Items => "Gegenstandszähler",
+            Kind::Direction => "Blickrichtung",
         }
     }
 
@@ -280,7 +284,7 @@ impl Kind {
 
     /// Ein Feld mit einer Zeile Text.
     pub fn label(self) -> bool {
-        let many = matches!(self, Kind::Armor | Kind::Potions | Kind::Items);
+        let many = matches!(self, Kind::Armor | Kind::Potions | Kind::Items | Kind::Direction);
         self.placed() && !many && !matches!(self, Kind::Keystrokes | Kind::Chat)
     }
 
@@ -291,6 +295,7 @@ impl Kind {
             // Vier Zeilen.
             Kind::Armor => (82.0, 22.0),
             Kind::Potions | Kind::Items => (190.0, 4.0 * gear::ROW),
+            Kind::Direction => compass::SIZE,
             // Längere Texte brauchen mehr Platz.
             Kind::System | Kind::Music | Kind::Note => (290.0, LABEL.1),
             _ => LABEL,

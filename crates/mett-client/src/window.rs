@@ -12,6 +12,9 @@ use windows::core::{HSTRING, Result, w};
 use windows::Win32::System::{DataExchange::*, Memory::*, Ole::CF_UNICODETEXT};
 
 const TICK_MS: u32 = 50;
+/// Für weiche Bewegungen.
+const SMOOTH: usize = 2;
+const SMOOTH_MS: u32 = 16;
 const WM_TRAY: u32 = WM_APP + 1;
 const CMD_TOGGLE: usize = 1;
 const CMD_QUIT: usize = 2;
@@ -42,6 +45,7 @@ pub fn start(hwnd: HWND) -> Result<()> {
         let event = EVENT_SYSTEM_FOREGROUND;
         SetWinEventHook(event, event, None, Some(foreground_changed), 0, 0, WINEVENT_OUTOFCONTEXT);
         SetTimer(Some(hwnd), 1, TICK_MS, None);
+        SetTimer(Some(hwnd), SMOOTH, SMOOTH_MS, None);
     }
     tray(hwnd, NIM_ADD);
     Ok(())
@@ -51,6 +55,7 @@ pub fn stop(hwnd: HWND) {
     tray(hwnd, NIM_DELETE);
     unsafe {
         let _ = KillTimer(Some(hwnd), 1);
+        let _ = KillTimer(Some(hwnd), SMOOTH);
     }
 }
 
@@ -163,6 +168,9 @@ fn tray_menu(hwnd: HWND) -> Result<()> {
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        WM_TIMER if wp.0 == SMOOTH => {
+            with_app(App::smooth);
+        }
         WM_TIMER => {
             with_app(App::tick);
             if with_app(App::status_changed) == Some(true) {

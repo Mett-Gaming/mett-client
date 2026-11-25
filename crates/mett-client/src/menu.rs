@@ -57,6 +57,7 @@ fn about(k: Kind) -> (Icon, &'static str) {
         Kind::Fullbright => (Icon::Sun, "Auch im Dunkeln alles hell."),
         Kind::Armor => (Icon::Chestplate, "Deine Rüstung neben der Schnellleiste."),
         Kind::Potions => (Icon::Potion, "Deine Effekte und wie lange sie noch laufen."),
+        Kind::Direction => (Icon::Compass, "Kompass mit deiner Blickrichtung."),
         Kind::Items => (Icon::Bag, "Zählt Gegenstände in deinem Inventar."),
         Kind::AppleSkin => (Icon::Apple, "Sättigung und Erschöpfung an der Hungerleiste."),
         Kind::Players => (Icon::Friends, "Spielerliste wie in Java, solange Tab gehalten wird."),
@@ -516,8 +517,8 @@ impl Editor {
             }
             Kind::Note => self.text_field(ui, c, line(b, 10, s), "Text", Field::Note),
             Kind::Items => self.text_field(ui, c, line(b, 10, s), "Gegenstände", Field::Items),
-            Kind::Potions => {
-                let state = t(self.gear_states[1]);
+            Kind::Potions | Kind::Direction => {
+                let state = t(if k == Kind::Potions { self.gear_states[1] } else { self.turn_state });
                 let hint = t("Liest nur deine eigenen Werte aus dem Spielspeicher.");
                 let text = format!("{}: {state}   {hint}", t(k.name()));
                 ui.text(line(b, 10, s), 12.0, ui.look.muted, Align::Left, text);

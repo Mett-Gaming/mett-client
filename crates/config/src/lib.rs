@@ -53,6 +53,7 @@ impl Module {
             Kind::Armor => (Anchor::Right, -16.0, -70.0),
             Kind::Potions => (Anchor::Right, -16.0, 60.0),
             Kind::Items => (Anchor::BottomRight, -16.0, -16.0),
+            Kind::Direction => (Anchor::Top, 0.0, 16.0),
             // Übrige Module untereinander, damit sie sich beim Einschalten nicht verdecken.
             k => (Anchor::TopLeft, 16.0, 16.0 + 64.0 * (k as u8 - 1) as f32),
         };
