@@ -11,8 +11,10 @@ mod cross_link;
 mod editor;
 mod focus;
 mod game;
+mod gear_link;
 mod marker;
 mod menu;
+mod named;
 mod pack;
 mod panel_link;
 mod picker;
@@ -22,6 +24,7 @@ mod plugins;
 mod screen;
 mod session;
 mod style_link;
+mod value_link;
 mod window;
 mod zoom_link;
 

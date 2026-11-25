@@ -5,6 +5,7 @@ use crate::chat_link::ChatLink;
 use crate::cross_link::CrossLink;
 use crate::editor::{self, Action, Editor, View};
 use crate::game::{self, Status, Watcher};
+use crate::gear_link::{self, GearLink};
 use crate::marker;
 use crate::panel_link::{Goal, PanelLink, State as PanelState, Want};
 use crate::ping_link::PingLink;
@@ -12,6 +13,7 @@ use crate::players_link::{self, PlayersLink};
 use crate::plugins::Plugins;
 use crate::screen::Screen;
 use crate::style_link::StyleLink;
+use crate::value_link::ValueLink;
 use crate::window;
 use crate::zoom_link::ZoomLink;
 use hud::chat_input::{ChatInput, Key};
@@ -76,11 +78,15 @@ pub struct App {
     apple: Option<AppleLink>,
     ping: Option<PingLink>,
     cross: Option<CrossLink>,
+    values: Option<ValueLink>,
+    gear: Option<GearLink>,
     /// Tab wird beim Spielen gehalten.
     tab: bool,
     /// Das Pack dieses Spielstarts blendet Minecrafts Anzeige aus; dann gibt es nichts zu verschieben.
     pack_hides: bool,
     keys_read: Instant,
+    /// Für bewegte Farben.
+    born: Instant,
     chat_input: ChatInput,
     hints: Hints,
     /// Offen seit.
@@ -134,10 +140,13 @@ impl App {
             apple: plugins.is_some().then(AppleLink::start),
             ping: plugins.is_some().then(PingLink::start),
             cross: plugins.clone().map(CrossLink::start),
+            values: plugins.clone().map(ValueLink::start),
+            gear: plugins.is_some().then(GearLink::start),
             tab: false,
             link: plugins.map(ChatLink::start),
             pack_hides,
             keys_read: Instant::now(),
+            born: Instant::now(),
             chat_input: ChatInput::default(),
             hints: Hints::default(),
             chat_open: None,
@@ -189,10 +198,11 @@ impl App {
         let module = self.chat_module();
         let playing = self.playing();
         let on = self.config.chat_input && module;
-        let pid = self.watcher.pid().filter(|_| on);
+        // Immer bereithalten, damit die Eingabe beim Einschalten sofort geht.
+        let pid = self.watcher.pid();
         let now = Instant::now();
         if let Some(l) = &mut self.link {
-            l.want(pid.map(|p| (p, playing)));
+            l.want(pid.map(|p| (p, playing && on)));
             self.notes.extend(
                 l.notes().into_iter().map(|t| sources::Line { text: format!("§c{}", hud::lang::t(t)), at: Some(now) }),
             );
@@ -230,12 +240,26 @@ impl App {
         let apple = self.apple.as_ref().map_or("nur beim Start über den Mett Launcher", AppleLink::state);
         // Nur wenn unseres auch wirklich zu sehen ist.
         let drawn = self.hud_on && self.screen.as_ref().and_then(Screen::size).is_some();
-        let on = drawn && self.config.profile().crosshair_enabled;
+        let on = drawn && self.module(Kind::Crosshair);
         let cross = self.watcher.pid().filter(|_| on).map(|pid| (pid, playing));
         if let Some(c) = &mut self.cross {
             c.want(cross);
         }
         let cross = self.cross.as_ref().map_or("nur beim Start über den Mett Launcher", CrossLink::state);
+        let wish = [self.module(Kind::Fullbright).then_some(self.config.fullbright)];
+        let values = self.watcher.pid().map(|pid| (pid, wish));
+        if let Some(v) = &mut self.values {
+            v.want(values);
+        }
+        let bright = self.values.as_ref().map_or("nur beim Start über den Mett Launcher", |v| v.state(0));
+        let items = self.module(Kind::Armor) || self.module(Kind::Items);
+        let effects = self.module(Kind::Potions);
+        let gear = self.watcher.pid().filter(|_| items || effects);
+        let bar = self.module(Kind::Armor) && self.config.profile().armor.sticky;
+        if let Some(g) = &mut self.gear {
+            g.want(gear.map(|pid| gear_link::Want { pid, playing, items, effects, bar }));
+        }
+        let gear = self.gear.as_ref().map_or(["nur beim Start über den Mett Launcher"; 2], GearLink::states);
         let held = self.tab;
         let zoom = self.watcher.pid().filter(|_| self.module(Kind::Zoom)).map(|pid| (pid, self.config.zoom.sane()));
         if let Some(z) = &mut self.zoom {
@@ -252,6 +276,9 @@ impl App {
             e.zoom_state = zoom;
             e.apple_state = apple;
             e.cross_state = cross;
+            e.bright_state = bright;
+            e.gear_states = gear;
+            e.time = self.born.elapsed().as_secs_f32();
             e.style_state = style;
             e.chat_state = state;
             e.panel_state = panel;
@@ -664,6 +691,8 @@ impl App {
         let look = self.panel.as_ref().filter(|_| replaced).and_then(|l| l.look(screen.1));
         let native = self.native(screen);
         let entries = self.config.chat_entries() as usize;
+        let gear = self.gear.as_ref().map(GearLink::view).unwrap_or_default();
+        let sample = self.editor.is_some();
         if let Some(e) = &mut self.editor {
             e.native = native;
         }
@@ -695,6 +724,18 @@ impl App {
                     }
                     continue;
                 }
+                Kind::Armor => {
+                    // Frei platziert; sonst weiter unten an der Schnellleiste.
+                    let base = hud::armor_hud::size(&p.armor);
+                    let unit = (at.w / base.0).min(at.h / base.1);
+                    self.armor(None, (at.x, at.y), unit, &gear, &mut out);
+                    continue;
+                }
+                Kind::Potions | Kind::Items => {
+                    let rows = gear_rows(kind, &gear, &p.items, sample);
+                    hud::gear::draw(at, kind.size(), style, &rows, &mut out);
+                    continue;
+                }
                 Kind::Cps => format!("{} | {} CPS", self.left.value(now), self.right.value(now)),
                 Kind::Clock => {
                     let t = unsafe { GetLocalTime() };
@@ -713,12 +754,28 @@ impl App {
                 Kind::Note if p.note.is_empty() => t("Notiz").into(),
                 Kind::Note => p.note.clone(),
                 // Ohne Platz auf dem Bildschirm.
-                Kind::Zoom | Kind::Players | Kind::AppleSkin => continue,
+                Kind::Zoom | Kind::Players | Kind::AppleSkin | Kind::Crosshair | Kind::Fullbright => {
+                    continue;
+                }
             };
             hud::label(at, kind, style, &text, &mut out);
         }
-        if p.crosshair_enabled {
-            hud::crosshair(screen, &p.crosshair, dpi, &mut out);
+        if p.modules[&Kind::Armor].enabled && p.armor.sticky && (sample || !self.in_menu || self.chat_open.is_some()) {
+            let unit = java_chat::unit(screen);
+            // Im Editor liegt die Leiste vielleicht unter einem Menü; dann dort, wo sie üblicherweise ist.
+            let standard = || {
+                let y = screen.1 - 24.0 * unit;
+                hud::Rect { x: (screen.0 - 182.0 * unit) / 2.0, y, w: 182.0 * unit, h: 22.0 * unit }
+            };
+            let h = screen.1;
+            let real = gear.bar.map(|(x, y, u)| hud::Rect { x: x * h, y: y * h, w: 182.0 * u * h, h: 22.0 * u * h });
+            if let Some(bar) = real.or_else(|| sample.then(standard)) {
+                self.armor(Some(bar), (0.0, 0.0), bar.w / 182.0, &gear, &mut out);
+            }
+        }
+        if p.modules[&Kind::Crosshair].enabled {
+            let time = self.born.elapsed().as_secs_f32();
+            hud::crosshair::draw((screen.0 / 2.0, screen.1 / 2.0), &p.crosshair, dpi, time, &mut out);
         }
         // Nicht in Menüs: Dort verdeckt das Spiel seine Leisten.
         if self.editor.is_none()
@@ -760,11 +817,48 @@ impl App {
         (out, action)
     }
 
+    /// Rüstung an der Schnellleiste oder frei.
+    fn armor(&self, bar: Option<hud::Rect>, at: (f32, f32), unit: f32, gear: &gear_link::View, out: &mut Vec<Draw>) {
+        use hud::armor_hud::{self, Frame, Slot};
+        let Some(icons) = hud::game_icons::get() else { return };
+        let mut slots: [Slot; 4] = [None; 4];
+        match &gear.own {
+            Some(o) if !o.worn.is_empty() => {
+                for s in &o.worn {
+                    if let Some(slot) = slots.get_mut(s.slot as usize) {
+                        *slot = Some((s.name.as_str(), s.damage));
+                    }
+                }
+            }
+            _ if self.editor.is_some() => {
+                slots = [
+                    Some(("diamond_helmet", 40)),
+                    Some(("netherite_chestplate", 120)),
+                    Some(("iron_leggings", 215)),
+                    Some(("golden_boots", 40)),
+                ];
+            }
+            _ => {}
+        }
+        let font = self.font.as_ref();
+        let none = hud::symbols::Symbols::default();
+        let width = |t: &str| t.chars().map(|c| font.map_or(6.0, |f| f.advance(c, &none))).sum();
+        // Zwanzig Takte je Sekunde.
+        let tick = (self.born.elapsed().as_millis() / 50) as u32;
+        let f = Frame { icons, unit, width: &width, tick };
+        let s = &self.config.profile().armor;
+        match bar {
+            Some(bar) => armor_hud::beside(bar, s, &slots, &f, out),
+            None => armor_hud::free(at, s, &slots, &f, out),
+        }
+    }
+
     fn paint(&mut self) {
         let Some(size) = self.screen.as_ref().and_then(Screen::size) else { return };
         if self.font.is_none()
             && let Some(dir) = game::directory(self.game)
         {
+            hud::game_icons::init(&dir);
             self.font = Some(Metrics::load(&dir.join("data").join("fonts").join("Mojangles.ttf")));
         }
         let mut scene = vec![];
@@ -895,6 +989,22 @@ impl App {
         if first {
             self.hotkey();
         }
+    }
+}
+
+/// Zeilen der drei Module; im Editor Beispiele, solange es nichts gibt.
+fn gear_rows(kind: Kind, v: &gear_link::View, items: &str, sample: bool) -> Vec<hud::gear::Row> {
+    use hud::gear;
+    match (kind, &v.own, &v.effects) {
+        (Kind::Potions, _, Some(e)) if !e.is_empty() => {
+            gear::potions(&e.iter().map(|e| (e.id, e.left)).collect::<Vec<_>>())
+        }
+        (Kind::Potions, ..) if sample => gear::potions(&[(1, 1800), (5, 900), (12, 4200)]),
+        (Kind::Items, Some(o), _) => {
+            gear::counts(items, &o.main.iter().map(|s| (s.name.as_str(), s.count as u32)).collect::<Vec<_>>())
+        }
+        (Kind::Items, ..) if sample => gear::counts(items, &[]),
+        _ => vec![],
     }
 }
 

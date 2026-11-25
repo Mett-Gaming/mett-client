@@ -4,6 +4,7 @@ HUD, Menü und Chat direkt in Minecraft Bedrock Edition unter Windows. Inoffizie
 - `crates/mett-client` Programm, `plugin-hud` Anzeige und Eingabe im Spiel, `hudlink` Verbindung, `render` Direct2D, `hud` Layout, `sources` Eingaben, `config` Einstellungen
 - `assets/fonts` Archivo (SIL OFL, Lizenz liegt bei)
 - `assets/appleskin` Symbole aus AppleSkin (Unlicense, Lizenz liegt bei)
+- `assets/armor-hud` Warnzeichen aus uku's Armor HUD (MIT, Lizenz liegt bei)
 - `assets/game-icons` Symbole von game-icons.net (CC BY 3.0, Urheber liegen bei)
 - `crates/compat` Update-Schutz je Funktion, `crates/gamemem` Lesezugriff
 

@@ -92,6 +92,7 @@ fn draw(s: &mut State, swap: &IDXGISwapChain3) -> windows::core::Result<()> {
         let mut n = Native::new(swap, &queue)?;
         // Minecrafts Schrift aus der Installation; wird nicht mitgeliefert.
         if let Some(dir) = std::env::current_exe().ok().as_ref().and_then(|p| p.parent()) {
+            hud::game_icons::init(dir);
             n.painter.load_game_font(&dir.join("data").join("fonts").join("Mojangles.ttf"));
         }
         s.native = Some(n);

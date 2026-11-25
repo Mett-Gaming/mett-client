@@ -9,6 +9,9 @@ use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::core::{HSTRING, Interface, Result, w};
 
+/// Das eigentliche Ziel und was umgekehrt darauf soll.
+type Beneath = Option<(ID2D1Image, ID2D1CommandList)>;
+
 /// Malt auf das gerade gesetzte Ziel.
 pub struct Painter {
     pub(crate) ctx: ID2D1DeviceContext,
@@ -76,6 +79,27 @@ impl Painter {
     }
 
     pub(crate) fn items(&self, items: &[Draw]) -> Result<()> {
+        // Eigentliches Ziel, solange umgekehrt gezeichnet wird.
+        let mut beneath = None;
+        let drawn = self.each(items, &mut beneath);
+        // Auch nach einem Fehler muss das Ziel wieder stimmen.
+        self.inverted(&mut beneath)?;
+        drawn
+    }
+
+    /// Legt das Gesammelte umgekehrt auf das eigentliche Ziel.
+    fn inverted(&self, beneath: &mut Beneath) -> Result<()> {
+        let Some((target, list)) = beneath.take() else { return Ok(()) };
+        unsafe {
+            self.ctx.SetTarget(&target);
+            list.Close()?;
+            let nearest = D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+            self.ctx.DrawImage(&list, None, None, nearest, D2D1_COMPOSITE_MODE_MASK_INVERT);
+        }
+        Ok(())
+    }
+
+    fn each(&self, items: &[Draw], beneath: &mut Beneath) -> Result<()> {
         unsafe {
             for item in items {
                 match item {
@@ -99,10 +123,22 @@ impl Painter {
                         let Some(b) = self.icon_sheet(*sheet, *c) else { continue };
                         // Pixelbilder bleiben kantig, die großen Menüsymbole werden sauber verkleinert.
                         let mode = match *sheet {
-                            hud::SHEET_APPLESKIN => D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
-                            _ => D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                            hud::SHEET_ICONS => D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                            _ => D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
                         };
                         self.ctx.DrawBitmap(&b, Some(&rectf(rect)), c[3], mode, Some(&rectf(from)), None);
+                    }
+                    Draw::Invert(true) if beneath.is_none() => {
+                        let list = self.ctx.CreateCommandList()?;
+                        *beneath = Some((self.ctx.GetTarget()?, list.clone()));
+                        self.ctx.SetTarget(&list);
+                    }
+                    Draw::Invert(true) => {}
+                    Draw::Invert(false) => self.inverted(beneath)?,
+                    Draw::Line { from, to, width, color: c } => {
+                        self.brush.SetColor(&color(*c));
+                        let p = |p: &(f32, f32)| windows_numerics::Vector2 { X: p.0, Y: p.1 };
+                        self.ctx.DrawLine(p(from), p(to), &self.brush, *width, None);
                     }
                     Draw::Game { x, y, unit, color: c, text } => {
                         let Some(f) = &self.game_font else { continue };
@@ -258,6 +294,8 @@ impl Painter {
         let a = match sheet {
             hud::SHEET_APPLESKIN => hud::appleskin::atlas()?,
             hud::SHEET_ICONS => hud::icons::atlas()?,
+            hud::SHEET_GAME => &hud::game_icons::get()?.atlas,
+            hud::SHEET_WARN => hud::armor_hud::warn()?,
             _ => return None,
         };
         let mut px = a.rgba.clone();
@@ -497,6 +535,22 @@ mod tests {
         // Ein dunkler Schatten zeichnet kein Symbol, ohne Tafel bleibt die Lücke.
         assert_eq!(paint(all, &[text(0.0, 0.25)], &[(2, 10)]), [black]);
         assert_eq!(paint(Symbols::default(), &[text(0.0, 1.0)], &[(2, 10)]), [black]);
+    }
+
+    #[test]
+    fn umgekehrt_wie_minecrafts_crosshair() {
+        let rect = Rect { x: 0.0, y: 0.0, w: 40.0, h: 40.0 };
+        let ground = Draw::Box { rect, radius: 0.0, color: [1.0, 0.2, 0.0, 1.0] };
+        let half = Rect { x: 0.0, y: 0.0, w: 20.0, h: 40.0 };
+        let white = Draw::Box { rect: half, radius: 0.0, color: [1.0; 4] };
+        let items = [ground, Draw::Invert(true), white.clone(), white, Draw::Invert(false)];
+        let got = paint(Symbols::default(), &items, &[(5, 5), (30, 5)]);
+        // Blau, Grün, Rot. Überlappendes kehrt nicht zweimal um.
+        let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 1);
+        assert!(near(got[0], [255, 204, 0, 255]) && near(got[1], [0, 51, 255, 255]), "{got:?}");
+        // Ohne Ende zählt es trotzdem.
+        let open = [Draw::Invert(true), Draw::Box { rect, radius: 0.0, color: [1.0; 4] }];
+        assert!(near(paint(Symbols::default(), &open, &[(5, 5)])[0], [255, 255, 255, 255]));
     }
 
     #[test]

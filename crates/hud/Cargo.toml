@@ -7,3 +7,6 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 png = "0.17"
+
+[dev-dependencies]
+serde_json.workspace = true

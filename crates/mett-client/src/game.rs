@@ -120,15 +120,21 @@ mod tests {
 
     #[test]
     fn erkennt_start_und_ende() {
-        let mut child = std::process::Command::new("ping.exe")
+        // Eigener Name, damit kein fremdes ping gefunden wird.
+        let name = format!("mett-test-{}.exe", std::process::id());
+        let exe = std::env::temp_dir().join(&name);
+        let system = std::env::var("SystemRoot").unwrap();
+        std::fs::copy(format!("{system}/System32/ping.exe"), &exe).unwrap();
+        let mut child = std::process::Command::new(&exe)
             .args(["-n", "30", "127.0.0.1"])
             .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        let mut w = Watcher::new("PING.EXE".into(), true);
+        let mut w = Watcher::new(name.to_uppercase(), true);
         let found = w.poll(Instant::now());
         child.kill().unwrap();
         child.wait().unwrap();
+        let _ = std::fs::remove_file(&exe);
         assert_eq!(found, Status::Running);
         assert_eq!(w.poll(Instant::now()), Status::Exited);
     }

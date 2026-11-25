@@ -1,9 +1,8 @@
 //! Zoom: sucht das Sichtfeld unter den benannten Einstellungen des laufenden Spiels und gibt es samt Zoom-Einstellungen
 //! ans Plugin. Läuft in einem eigenen Thread.
-use crate::focus;
 use crate::plugins::Plugins;
-use gamemem::Reader;
-use gamemem::options::{self, Options};
+use crate::{focus, named};
+use gamemem::options::Options;
 use hud::zoom::Settings;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -135,15 +134,8 @@ impl Worker {
     }
 
     fn turn_on(&mut self, pid: u32, s: &Settings) -> Result<(), &'static str> {
-        if self.found.as_ref().is_none_or(|f| f.0 != pid) {
-            let file = focus::options_file().and_then(|p| std::fs::read_to_string(p).ok());
-            let file = options::parse(&file.ok_or("Einstellungsdatei nicht lesbar")?);
-            let image = gamemem::image_range(pid).map_err(|_| "Spiel nicht lesbar")?;
-            let reader = Reader::open_for_scan(pid).map_err(|_| "Spiel nicht lesbar")?;
-            let o = options::find(&reader, &image, &file).ok_or("Einstellungen nicht eindeutig gefunden")?;
-            let fov = options::locate(&reader, &o, FOV).ok_or("Sichtfeld nicht eindeutig gefunden")?;
-            self.found = Some((pid, o, fov));
-        }
+        let (o, fov) = named::place(pid, FOV)?;
+        self.found = Some((pid, o, fov));
         // Erst merken: Minecraft könnte mitten im Zoom speichern.
         focus::remember_zoom().map_err(|_| "Merkzettel ließ sich nicht schreiben")?;
         self.plugins.load(pid, PLUGIN)?;
@@ -151,6 +143,7 @@ impl Worker {
             Some(0) => Ok(()),
             _ => {
                 self.found = None;
+                named::forget();
                 Err("Plugin nimmt das Sichtfeld nicht an")
             }
         }

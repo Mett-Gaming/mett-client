@@ -44,6 +44,11 @@ pub fn encode(items: &[Draw]) -> Vec<u8> {
                 o.push(*sheet);
                 f(&mut o, &[r.x, r.y, r.w, r.h, s.x, s.y, s.w, s.h, c[0], c[1], c[2], c[3]]);
             }
+            Draw::Invert(on) => o.extend([6, *on as u8]),
+            Draw::Line { from, to, width, color: c } => {
+                o.push(5);
+                f(&mut o, &[from.0, from.1, to.0, to.1, *width, c[0], c[1], c[2], c[3]]);
+            }
             Draw::Game { x, y, unit, color: c, text } => {
                 o.push(3);
                 f(&mut o, &[*x, *y, *unit, c[0], c[1], c[2], c[3]]);
@@ -119,6 +124,14 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<Draw>> {
             },
             3 => Draw::Game { x: r.f32()?, y: r.f32()?, unit: r.f32()?, color: r.color()?, text: r.text()? },
             4 => Draw::Icon { sheet: r.byte()?, rect: r.rect()?, from: r.rect()?, color: r.color()? },
+            6 => Draw::Invert(match r.byte()? {
+                0 => false,
+                1 => true,
+                _ => return None,
+            }),
+            5 => {
+                Draw::Line { from: (r.f32()?, r.f32()?), to: (r.f32()?, r.f32()?), width: r.f32()?, color: r.color()? }
+            }
             _ => return None,
         });
     }
@@ -137,6 +150,8 @@ mod tests {
             Draw::Outline { rect, radius: 0.0, width: 2.0, color },
             Draw::Text { rect, size: 14.0, color, align: Align::Right, text: "Grüße 😀".into() },
             Draw::Icon { sheet: 1, rect, from: Rect { x: 27.0, y: 0.0, w: 9.0, h: 9.0 }, color },
+            Draw::Invert(true),
+            Draw::Line { from: (1.0, 2.0), to: (3.0, -4.0), width: 2.0, color },
             Draw::Game { x: -3.0, y: 9.0, unit: 3.0, color, text: String::new() },
         ]
     }

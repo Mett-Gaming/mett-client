@@ -57,3 +57,5 @@ Offen: FPS-Werte, Discord-Anzeige über den Launcher, alles in Minecraft.
 - 🎨 Design-Seite: globales Design je Profil für alle Module (je Modul „Globales Design benutzen“, anfangs an) und Aussehen des Menüfensters. Farbwähler statt fester Farben. Einstellungen Version 6: selbst gestaltete Module behalten ihr Aussehen.
 - 🌍 Deutsch oder Englisch nach `game_language` in `options.txt`, alles andere wird Englisch (`hud::lang`; ein Test meldet fehlende Übersetzungen).
 - 🧩 Symbole von game-icons.net (CC BY 3.0). Module alphabetisch, rechte Umschalttaste öffnet das Menü direkt, die untere Leiste ist weg.
+- ➕ Crosshair: sechs Formen, Breite und Höhe getrennt, Lücke, Dicke, Drehung, Punkt, Umriss, Regenbogen, Vorschau. Einstellungen Version 7.
+- ➕ Crosshair ist ein Modul (Einstellungen Version 8, der alte Schalter wird übernommen). „Umkehren wie Vanilla“ zeichnet mit Direct2Ds `MASK_INVERT` (Ergebnis: 1 − Untergrund).

@@ -1,10 +1,15 @@
 //! Reine HUD-Logik: Anker, Layout und Zeichenbefehle. Kein Windows, voll testbar.
+pub use crosshair::Crosshair;
 use serde::{Deserialize, Serialize};
 
 pub mod appleskin;
+pub mod armor_hud;
 pub mod chat_input;
 pub mod color;
+pub mod crosshair;
 pub mod editor;
+pub mod game_icons;
+pub mod gear;
 pub mod hints;
 pub mod icons;
 pub mod java_chat;
@@ -129,6 +134,15 @@ pub enum Draw {
         from: Rect,
         color: Color,
     },
+    /// Was zwischen `true` und `false` kommt, kehrt um, was darunter liegt, wie Minecrafts Crosshair.
+    Invert(bool),
+    /// Strecke mit geraden Enden.
+    Line {
+        from: (f32, f32),
+        to: (f32, f32),
+        width: f32,
+        color: Color,
+    },
     /// Minecraft-Schrift; `unit` ist die Größe eines Schriftpixels.
     Game {
         x: f32,
@@ -149,6 +163,9 @@ pub enum Align {
 /// Symboltafeln für `Draw::Icon`.
 pub const SHEET_APPLESKIN: u8 = 0;
 pub const SHEET_ICONS: u8 = 1;
+/// Aus der Installation des Nutzers.
+pub const SHEET_GAME: u8 = 2;
+pub const SHEET_WARN: u8 = 3;
 
 /// Design-Tokens des Mett Launchers.
 pub mod theme {
@@ -181,6 +198,11 @@ pub enum Kind {
     Zoom,
     Players,
     AppleSkin,
+    Crosshair,
+    Fullbright,
+    Armor,
+    Potions,
+    Items,
 }
 
 /// Übliche Größe eines Textfelds; alle sind gleich hoch.
@@ -191,7 +213,7 @@ const TEXT_HEIGHT: f32 = 24.0;
 const TEXT_SCALE: f32 = 1.25;
 
 impl Kind {
-    pub const ALL: [Kind; 15] = [
+    pub const ALL: [Kind; 20] = [
         Kind::Keystrokes,
         Kind::Cps,
         Kind::Clock,
@@ -207,6 +229,11 @@ impl Kind {
         Kind::Zoom,
         Kind::Players,
         Kind::AppleSkin,
+        Kind::Crosshair,
+        Kind::Fullbright,
+        Kind::Armor,
+        Kind::Potions,
+        Kind::Items,
     ];
 
     pub fn name(self) -> &'static str {
@@ -226,33 +253,42 @@ impl Kind {
             Kind::Zoom => "Zoom",
             Kind::Players => "Spielerliste",
             Kind::AppleSkin => "AppleSkin",
+            Kind::Crosshair => "Crosshair",
+            Kind::Fullbright => "Fullbright",
+            Kind::Armor => "Rüstung",
+            Kind::Potions => "Effekte",
+            Kind::Items => "Gegenstandszähler",
         }
     }
 
     /// Hat einen Platz auf dem Bildschirm, den man verschieben kann.
     pub fn placed(self) -> bool {
-        !matches!(self, Kind::Zoom | Kind::Players | Kind::AppleSkin)
+        !matches!(self, Kind::Zoom | Kind::Players | Kind::AppleSkin | Kind::Crosshair | Kind::Fullbright)
     }
 
     /// Bildschirmpixel je Maßeinheit: der Chat rechnet in Java-Pixeln, alles andere in Windows-Skalierung.
     pub fn unit(self, screen: (f32, f32), dpi: f32) -> f32 {
-        if self == Kind::Chat { java_chat::unit(screen) } else { dpi }
+        if matches!(self, Kind::Chat | Kind::Armor) { java_chat::unit(screen) } else { dpi }
     }
 
     /// Aussehen lässt sich einstellen.
     pub fn styled(self) -> bool {
-        self.placed() && self != Kind::Chat
+        self.placed() && !matches!(self, Kind::Chat | Kind::Armor)
     }
 
     /// Ein Feld mit einer Zeile Text.
     pub fn label(self) -> bool {
-        self.placed() && !matches!(self, Kind::Keystrokes | Kind::Chat)
+        let many = matches!(self, Kind::Armor | Kind::Potions | Kind::Items);
+        self.placed() && !many && !matches!(self, Kind::Keystrokes | Kind::Chat)
     }
 
     pub fn size(self) -> (f32, f32) {
         match self {
             Kind::Keystrokes => (124.0, 162.0),
             Kind::Chat => (java_chat::FULL_WIDTH, java_chat::LINE * java_chat::ROWS as f32),
+            // Vier Zeilen.
+            Kind::Armor => (82.0, 22.0),
+            Kind::Potions | Kind::Items => (190.0, 4.0 * gear::ROW),
             // Längere Texte brauchen mehr Platz.
             Kind::System | Kind::Music | Kind::Note => (290.0, LABEL.1),
             _ => LABEL,
@@ -327,8 +363,8 @@ pub fn keystrokes(at: Rect, style: &Style, keys: Keys, out: &mut Vec<Draw>) {
     key(0.0, 42.0, 40.0, 40.0, "A", keys.a);
     key(42.0, 42.0, 40.0, 40.0, "S", keys.s);
     key(84.0, 42.0, 40.0, 40.0, "D", keys.d);
-    key(0.0, 84.0, 61.0, 40.0, "LMT", keys.lmb);
-    key(63.0, 84.0, 61.0, 40.0, "RMT", keys.rmb);
+    key(0.0, 84.0, 61.0, 40.0, lang::t("LMT"), keys.lmb);
+    key(63.0, 84.0, 61.0, 40.0, lang::t("RMT"), keys.rmb);
     key(0.0, 126.0, 124.0, 36.0, lang::t("Leertaste"), keys.space);
 }
 
@@ -336,34 +372,6 @@ pub fn keystrokes(at: Rect, style: &Style, keys: Keys, out: &mut Vec<Draw>) {
 pub fn label(at: Rect, kind: Kind, style: &Style, text: &str, out: &mut Vec<Draw>) {
     let size = kind.size();
     style.field(at, (at.w / size.0 * TEXT_SCALE).min(at.h / TEXT_HEIGHT), text, false, out);
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Crosshair {
-    pub length: f32,
-    pub gap: f32,
-    pub thickness: f32,
-    pub dot: bool,
-    pub color: u32,
-    pub alpha: f32,
-}
-
-pub fn crosshair(screen: (f32, f32), c: &Crosshair, dpi: f32, out: &mut Vec<Draw>) {
-    // Ganze Pixel, sonst wirken dünne Linien verwaschen.
-    let len = (c.length * dpi).round();
-    let gap = (c.gap * dpi).round();
-    let t = (c.thickness * dpi).round().max(1.0);
-    let x0 = ((screen.0 - t) / 2.0).floor();
-    let y0 = ((screen.1 - t) / 2.0).floor();
-    let mut bar =
-        |x, y, w, h| out.push(Draw::Box { rect: Rect { x, y, w, h }, radius: 0.0, color: rgb(c.color, c.alpha) });
-    bar(x0 - gap - len, y0, len, t);
-    bar(x0 + t + gap, y0, len, t);
-    bar(x0, y0 - gap - len, t, len);
-    bar(x0, y0 + t + gap, t, len);
-    if c.dot {
-        bar(x0, y0, t, t);
-    }
 }
 
 #[cfg(test)]
@@ -425,24 +433,5 @@ mod tests {
         let p = Placement { x: 9999.0, ..P };
         assert_eq!(p.resolve((800.0, 600.0), (100.0, 50.0), 1.0).x, 700.0);
         assert_eq!(p.resolve((50.0, 20.0), (100.0, 50.0), 1.0).x, 0.0);
-    }
-
-    #[test]
-    fn crosshair_ist_symmetrisch() {
-        for thickness in [1.0, 2.0, 3.0] {
-            let c = Crosshair { length: 6.0, gap: 3.0, thickness, dot: true, color: 0xffffff, alpha: 1.0 };
-            let mut v = vec![];
-            crosshair((801.0, 600.0), &c, 1.0, &mut v);
-            let r: Vec<Rect> = v
-                .iter()
-                .filter_map(|d| match d {
-                    Draw::Box { rect, .. } => Some(*rect),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(r.len(), 5);
-            assert_eq!(r[4].x - (r[0].x + r[0].w), r[1].x - (r[4].x + r[4].w));
-            assert_eq!(r[4].y - (r[2].y + r[2].h), r[3].y - (r[4].y + r[4].h));
-        }
     }
 }

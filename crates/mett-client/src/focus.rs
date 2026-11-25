@@ -5,6 +5,7 @@
 //! zurückgestellt, und eine Wahl des Nutzers bleibt unangetastet.
 use crate::zoom_link::FOV;
 use mett_plugin::style::JAVA;
+use mett_plugin::values::ALLOWED;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
@@ -159,6 +160,57 @@ fn restore_style(path: &Path) -> io::Result<()> {
     fs::remove_file(note)
 }
 
+/// Merkzettel einer Zahlen-Einstellung: erst die Zeile des Nutzers, dann unsere Werte.
+fn value_note(path: &Path, name: &str) -> PathBuf {
+    path.with_file_name(format!("mett_{name}_restore"))
+}
+
+/// Vor dem Umstellen: den Wert des Nutzers festhalten, falls Minecraft zwischendurch unseren speichert.
+pub fn remember_value(name: &str, ours: f32) -> io::Result<()> {
+    for p in users().map(|u| files(&u)).unwrap_or_default() {
+        remember_value_in(&p, name, ours)?;
+    }
+    Ok(())
+}
+
+fn remember_value_in(path: &Path, name: &str, ours: f32) -> io::Result<()> {
+    let note = value_note(path, name);
+    // Ein vorhandener Zettel ist älter und kennt den echten Wert.
+    let mut text = match fs::read_to_string(&note) {
+        Ok(t) => t,
+        Err(_) => match line(&fs::read_to_string(path)?, name) {
+            Some(user) => user,
+            None => return Ok(()),
+        },
+    };
+    let ours = ours.to_string();
+    if !text.lines().skip(1).any(|l| l == ours) {
+        text += &format!("\n{ours}");
+    }
+    fs::write(note, text)
+}
+
+/// Nach dem Spiel: Steht noch einer unserer Werte da, kommt der gemerkte zurück.
+fn restore_value(path: &Path, name: &str) -> io::Result<()> {
+    let note = value_note(path, name);
+    if !note.is_file() {
+        return Ok(());
+    }
+    let (old, text) = (fs::read_to_string(&note)?, fs::read_to_string(path)?);
+    let mut lines = old.lines();
+    let user = lines.next().unwrap_or_default();
+    let ours: Vec<f32> = lines.filter_map(|l| l.parse().ok()).collect();
+    if let Some(now) = line(&text, name)
+        && fov(&now).is_some_and(|v| ours.iter().any(|o| (o - v).abs() < 0.0005))
+        && user.starts_with(&format!("{name}:"))
+    {
+        let ends =
+            text.split_inclusive('\n').map(|l| if l.trim_end() == now { l.replace(&now, user) } else { l.to_string() });
+        write(path, &ends.collect::<String>())?;
+    }
+    fs::remove_file(note)
+}
+
 /// Vor dem Spielstart. Fehlt ein Eintrag, wird er nicht angefasst.
 pub fn force() {
     each(force_file);
@@ -170,6 +222,9 @@ pub fn restore() {
     for p in users().map(|u| files(&u)).unwrap_or_default() {
         let _ = restore_style(&p);
         let _ = restore_zoom(&p);
+        for (name, ..) in ALLOWED {
+            let _ = restore_value(&p, name);
+        }
     }
 }
 
@@ -287,6 +342,25 @@ mod tests {
         fs::write(&p, user.replace("110", "80")).unwrap();
         restore_zoom(&p).unwrap();
         assert_eq!(read(&p), user.replace("110", "80"));
+        assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn umgestellte_zahl_kommt_zurueck() {
+        let user = "a:1\r\ngfx_gamma:0.8\r\n";
+        let p = account("gamma", user);
+        remember_value_in(&p, "gfx_gamma", 10.0).unwrap();
+        fs::write(&p, user.replace("0.8", "10")).unwrap();
+        // Regler bewegt, oder neuer Start nach einem Absturz: Der Wert des Nutzers bleibt der erste.
+        remember_value_in(&p, "gfx_gamma", 5.5).unwrap();
+        fs::write(&p, user.replace("0.8", "5.5")).unwrap();
+        restore_value(&p, "gfx_gamma").unwrap();
+        assert_eq!(read(&p), user);
+        // Der Nutzer hat selbst umgestellt.
+        remember_value_in(&p, "gfx_gamma", 10.0).unwrap();
+        fs::write(&p, user.replace("0.8", "0.2")).unwrap();
+        restore_value(&p, "gfx_gamma").unwrap();
+        assert_eq!(read(&p), user.replace("0.8", "0.2"));
         assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1);
     }
 

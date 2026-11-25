@@ -35,6 +35,16 @@ pub enum Icon {
     Next,
     Reset,
     Pencil,
+    Crosshair,
+    Sun,
+    Chest,
+    Helmet,
+    Chestplate,
+    Leggings,
+    Boots,
+    Potion,
+    Bag,
+    Cube,
 }
 
 pub fn atlas() -> Option<&'static Atlas> {
@@ -63,8 +73,8 @@ mod tests {
     #[test]
     fn jedes_symbol_steht_auf_der_tafel() {
         let a = atlas().unwrap();
-        assert_eq!((a.width, a.height), (1024, 512));
-        for i in 0..=Icon::Pencil as u32 {
+        assert_eq!((a.width, a.height), (1024, 640));
+        for i in 0..=Icon::Cube as u32 {
             let (x, y) = (i % ROW * 128, i / ROW * 128);
             let solid = (0..128 * 128).filter(|p| {
                 let at = ((y + p / 128) * a.width + x + p % 128) * 4 + 3;

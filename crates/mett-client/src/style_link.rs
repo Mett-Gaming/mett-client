@@ -1,9 +1,8 @@
 //! Chat wie in der Java Edition: sucht zwei benannte Einstellungen des laufenden Spiels und lässt das Plugin sie
 //! umstellen. Läuft in einem eigenen Thread.
-use crate::focus;
 use crate::plugins::Plugins;
-use gamemem::Reader;
-use gamemem::options::{self, Options};
+use crate::{focus, named};
+use gamemem::options::Options;
 use mett_plugin::panel::{PLUGIN, answer};
 use mett_plugin::style::Order;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -117,14 +116,7 @@ impl Worker {
     }
 
     fn turn_on(&mut self, pid: u32) -> Result<(), &'static str> {
-        if self.found.as_ref().is_none_or(|f| f.0 != pid) {
-            let file = focus::options_file().and_then(|p| std::fs::read_to_string(p).ok());
-            let file = options::parse(&file.ok_or("Einstellungsdatei nicht lesbar")?);
-            let image = gamemem::image_range(pid).map_err(|_| "Spiel nicht lesbar")?;
-            let reader = Reader::open_for_scan(pid).map_err(|_| "Spiel nicht lesbar")?;
-            let o = options::find(&reader, &image, &file).ok_or("Chat-Einstellungen nicht eindeutig gefunden")?;
-            self.found = Some((pid, o));
-        }
+        self.found = Some((pid, named::options(pid)?));
         // Erst merken: Minecraft speichert seine Einstellungen auch zwischendurch.
         focus::remember_style().map_err(|_| "Merkzettel ließ sich nicht schreiben")?;
         self.plugins.load(pid, PLUGIN)?;
@@ -133,6 +125,7 @@ impl Worker {
             _ => {
                 // Beim nächsten Mal neu suchen.
                 self.found = None;
+                named::forget();
                 Err("Plugin nimmt die Einstellungen nicht an")
             }
         }

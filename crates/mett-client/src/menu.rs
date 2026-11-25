@@ -1,8 +1,9 @@
 //! Einstellungsmenü: Seitenleiste, Reiter, Suche, Modulkarten und Detailseite. Aufbau wie beim NoRisk Client,
 //! Aussehen und Texte von Mett.
 use crate::editor::{Action, Editor, Field, View};
-use crate::picker::{MenuPart, Paint, Part, Picker};
+use crate::picker::{CrossPart, MenuPart, Paint, Part, Picker};
 use config::{Config, Design, Module, Profile};
+use hud::crosshair::Shape;
 use hud::icons::Icon;
 use hud::lang::t;
 use hud::ui::{Look, Ui};
@@ -14,7 +15,6 @@ pub enum Page {
     Modules,
     /// Einstellungen eines Moduls.
     Detail(Kind),
-    Crosshair,
     Profiles,
     Options,
     Design,
@@ -53,6 +53,11 @@ fn about(k: Kind) -> (Icon, &'static str) {
         Kind::Stopwatch => (Icon::Stopwatch, "Stoppuhr: F9 Start und Pause, F10 zurück."),
         Kind::Note => (Icon::Quill, "Eigener Text auf dem Bildschirm."),
         Kind::Zoom => (Icon::Lens, "Zoom mit weichem Verlauf und Mausrad."),
+        Kind::Crosshair => (Icon::Crosshair, "Eigenes Crosshair statt dem von Minecraft."),
+        Kind::Fullbright => (Icon::Sun, "Auch im Dunkeln alles hell."),
+        Kind::Armor => (Icon::Chestplate, "Deine Rüstung neben der Schnellleiste."),
+        Kind::Potions => (Icon::Potion, "Deine Effekte und wie lange sie noch laufen."),
+        Kind::Items => (Icon::Bag, "Zählt Gegenstände in deinem Inventar."),
         Kind::AppleSkin => (Icon::Apple, "Sättigung und Erschöpfung an der Hungerleiste."),
         Kind::Players => (Icon::Friends, "Spielerliste wie in Java, solange Tab gehalten wird."),
         Kind::Chat => (Icon::Bubble, "Minecrafts Chat, frei platziert, mit eigener Eingabe."),
@@ -121,14 +126,6 @@ impl Editor {
         let page = match self.page {
             Page::Modules => self.cards(ui, c, main),
             Page::Detail(k) => self.detail(ui, c, b, k),
-            Page::Crosshair => {
-                let state = format!("{}: {}", t("Minecrafts Crosshair"), t(self.cross_state));
-                ui.text(self::line(b, 7, s), 12.0, ui.look.muted, Align::Left, state);
-                if let Some(at) = crosshair(ui, c, b) {
-                    self.pick(c, Paint::Crosshair, at);
-                }
-                Action::None
-            }
             Page::Profiles => self.profiles(ui, c, b),
             Page::Options => self.options(ui, c, b),
             Page::Design => self.design_page(ui, c, b),
@@ -161,7 +158,7 @@ impl Editor {
     fn rail(&mut self, ui: &mut Ui, c: &mut Config, rail: Rect) -> Action {
         let s = ui.scale;
         let mut action = Action::None;
-        let modules = matches!(self.page, Page::Modules | Page::Detail(_) | Page::Crosshair | Page::Profiles);
+        let modules = matches!(self.page, Page::Modules | Page::Detail(_) | Page::Profiles);
         let entries = [
             (Icon::Puzzle, "MODULE", modules),
             (Icon::Move, "HUD", false),
@@ -204,6 +201,12 @@ impl Editor {
             }
             if ui.button(right(0.0, 104.0), "RESET", false) {
                 *m = Module { enabled: m.enabled, ..Module::standard(k) };
+                if k == Kind::Armor {
+                    c.profile_mut().armor = Default::default();
+                }
+                if k == Kind::Crosshair {
+                    c.profile_mut().crosshair = Profile::default().crosshair;
+                }
             }
             return;
         }
@@ -225,11 +228,7 @@ impl Editor {
             }
             return;
         }
-        let tabs = [
-            (Page::Modules, "MODULE", 24.0, 104.0),
-            (Page::Profiles, "PROFILE", 136.0, 104.0),
-            (Page::Crosshair, "CROSSHAIR", 248.0, 124.0),
-        ];
+        let tabs = [(Page::Modules, "MODULE", 24.0, 104.0), (Page::Profiles, "PROFILE", 136.0, 104.0)];
         for (page, name, x, w) in tabs {
             if ui.tab(at(x, w), name, self.page == page) {
                 self.go(c, page);
@@ -338,6 +337,53 @@ impl Editor {
         Action::None
     }
 
+    /// Dieselben Einstellungen wie NoRisks Armor HUD, soweit Bedrock sie hergibt.
+    fn armor(&mut self, ui: &mut Ui, c: &mut Config, b: Rect) -> Action {
+        use hud::armor_hud::{Durability, Settings, Shown, Side};
+        let s = ui.scale;
+        let d = Settings::default();
+        let x = &mut c.profile_mut().armor;
+        let at = |i: usize| line(b, i, s);
+        let half = |i: usize, right: usize| cell(b, i, right, 2, s);
+        ui.toggle(half(0, 0), "An der Schnellleiste", &mut x.sticky);
+        ui.toggle(half(0, 1), "Hintergrund", &mut x.background);
+        ui.toggle(half(1, 0), "Senkrecht", &mut x.vertical);
+        ui.toggle(half(1, 1), "Umgekehrte Reihenfolge", &mut x.reversed);
+        ui.toggle(half(2, 0), "Symbole leerer Plätze", &mut x.icons);
+        ui.toggle(half(2, 1), "Warnzeichen", &mut x.warning);
+        let sides = [(Side::Left, "Links"), (Side::Right, "Rechts"), (Side::Split, "Beide Seiten")];
+        pick_one(ui, at(3), "Seite", &sides, &mut x.side);
+        let shown = [
+            (Shown::Always, "Immer"),
+            (Shown::IfAny, "Wenn etwas angelegt ist"),
+            (Shown::NotEmpty, "Nur angelegte Teile"),
+            (Shown::Damaged, "Nur fast kaputte"),
+        ];
+        pick_one(ui, at(4), "Anzeigen", &shown, &mut x.shown);
+        let kinds = [(Durability::Bar, "Balken"), (Durability::Number, "Zahl"), (Durability::Percent, "Prozent")];
+        pick_one(ui, at(5), "Haltbarkeit", &kinds, &mut x.durability);
+        ui.slider_reset(51, at(6), "Wippen der Warnung", &mut x.bob, (0.0, 10.0), 1.0, d.bob);
+        ui.slider_reset(52, at(7), "Warnen ab Haltbarkeit", &mut x.min_value, (0.0, 100.0), 1.0, d.min_value);
+        ui.slider_reset(53, at(8), "Warnen ab Prozent", &mut x.min_percent, (0.0, 100.0), 1.0, d.min_percent);
+        let state = t(self.gear_states[0]);
+        let hint = t("Liest nur deine eigenen Werte aus dem Spielspeicher.");
+        ui.text(at(10), 12.0, ui.look.muted, Align::Left, format!("{}: {state}   {hint}", t("Rüstung")));
+        Action::None
+    }
+
+    /// Stellt eine Einstellung von Minecraft um.
+    fn fullbright(&mut self, ui: &mut Ui, c: &mut Config, b: Rect) -> Action {
+        let s = ui.scale;
+        ui.text(line(b, 0, s), 14.0, ui.look.text, Align::Left, about(Kind::Fullbright).1);
+        ui.fill(Rect { x: b.x, y: b.y + 38.0 * s, w: b.w, h: s }, ui.look.border, 0.7);
+        let state = format!("Fullbright: {}", t(self.bright_state));
+        ui.text(line(b, 1, s), 12.0, ui.look.bright(), Align::Left, state);
+        ui.slider_reset(42, line(b, 2, s), "Helligkeit", &mut c.fullbright, (1.0, 15.0), 0.5, 10.0);
+        let hint = "Stellt eine Einstellung von Minecraft um und am Ende zurück. Serverregeln können das verbieten.";
+        ui.text(line(b, 3, s), 12.0, ui.look.muted, Align::Left, hint);
+        Action::None
+    }
+
     fn players(&mut self, ui: &mut Ui, b: Rect) -> Action {
         let s = ui.scale;
         ui.text(line(b, 0, s), 14.0, ui.look.text, Align::Left, about(Kind::Players).1);
@@ -430,6 +476,9 @@ impl Editor {
             Kind::Zoom => return self.zoom(ui, c, b),
             Kind::Players => return self.players(ui, b),
             Kind::AppleSkin => return self.apple(ui, c, b),
+            Kind::Crosshair => return self.crosshair(ui, c, b),
+            Kind::Armor => return self.armor(ui, c, b),
+            Kind::Fullbright => return self.fullbright(ui, c, b),
             _ => {}
         }
         let s = ui.scale;
@@ -463,6 +512,13 @@ impl Editor {
                 ui.text(line(b, 10, s), 12.0, ui.look.muted, Align::Left, hint);
             }
             Kind::Note => self.text_field(ui, c, line(b, 10, s), "Text", Field::Note),
+            Kind::Items => self.text_field(ui, c, line(b, 10, s), "Gegenstände", Field::Items),
+            Kind::Potions => {
+                let state = t(self.gear_states[1]);
+                let hint = t("Liest nur deine eigenen Werte aus dem Spielspeicher.");
+                let text = format!("{}: {state}   {hint}", t(k.name()));
+                ui.text(line(b, 10, s), 12.0, ui.look.muted, Align::Left, text);
+            }
             _ => {}
         }
         Action::None
@@ -505,7 +561,8 @@ impl Editor {
     fn text_field(&mut self, ui: &mut Ui, c: &mut Config, r: Rect, label: &str, field: Field) {
         ui.text(r, 13.0, ui.look.text, Align::Left, label);
         let on = self.typing == Some(field);
-        let mut text = c.profile().note.clone();
+        let p = c.profile();
+        let mut text = if field == Field::Items { p.items.clone() } else { p.note.clone() };
         if on {
             text.push('|');
         } else if text.is_empty() {
@@ -617,20 +674,72 @@ fn controls(ui: &mut Ui, b: Rect, row: usize, v: &mut Design) -> (bool, Option<(
     (resized, clicked)
 }
 
-/// Liefert das Farbfeld, wenn es angeklickt wurde.
-fn crosshair(ui: &mut Ui, c: &mut Config, b: Rect) -> Option<Rect> {
-    let s = ui.scale;
-    let p = c.profile_mut();
-    ui.toggle(line(b, 0, s), "Eigenes Crosshair", &mut p.crosshair_enabled);
-    let d = Profile::default().crosshair;
-    let x = &mut p.crosshair;
-    ui.slider_reset(10, line(b, 1, s), "Länge", &mut x.length, (0.0, 30.0), 1.0, d.length);
-    ui.slider_reset(11, line(b, 2, s), "Lücke", &mut x.gap, (0.0, 20.0), 1.0, d.gap);
-    ui.slider_reset(12, line(b, 3, s), "Dicke", &mut x.thickness, (1.0, 8.0), 1.0, d.thickness);
-    ui.slider_reset(13, line(b, 4, s), "Deckkraft", &mut x.alpha, (0.1, 1.0), 0.05, d.alpha);
-    ui.toggle(line(b, 5, s), "Punkt in der Mitte", &mut x.dot);
-    let (clicked, at) = ui.color(line(b, 6, s), "Farbe", x.color);
-    clicked.then_some(at)
+impl Editor {
+    fn crosshair(&mut self, ui: &mut Ui, c: &mut Config, b: Rect) -> Action {
+        let s = ui.scale;
+        for (i, name) in ["Form", "Farben"].into_iter().enumerate() {
+            if ui.tab(cell(b, 0, i, 4, s), name, self.cross_colors == (i == 1)) {
+                self.cross_colors = i == 1;
+            }
+        }
+        // Vorschau, denn in der Bildmitte liegt das Menü darüber.
+        let box_ = Rect { x: b.x + b.w - 150.0 * s, y: b.y, w: 150.0 * s, h: 150.0 * s };
+        ui.fill(box_, 0x6B7A8C, 0.9);
+        let center = (box_.x + box_.w / 2.0, box_.y + box_.h / 2.0);
+        hud::crosshair::draw(center, &c.profile().crosshair, s, self.time, ui.out);
+        let left = Rect { w: b.w - 170.0 * s, ..b };
+        let p = c.profile_mut();
+        let d = Profile::default().crosshair;
+        let x = &mut p.crosshair;
+        let at = |i: usize| if i < 4 { line(left, i, s) } else { line(b, i, s) };
+        let mut clicked = None;
+        if self.cross_colors {
+            let mut color = |ui: &mut Ui, i: usize, name: &str, part, value| {
+                let (hit, field) = ui.color(at(i), name, value);
+                if hit {
+                    clicked = Some((part, field));
+                }
+            };
+            ui.toggle(at(1), "Umkehren wie Vanilla", &mut x.invert);
+            // Umgekehrt gibt es keine Farben.
+            let locked = ui.locked;
+            ui.locked |= x.invert;
+            color(ui, 2, "Farbe", CrossPart::Lines, x.color);
+            ui.toggle(at(3), "Regenbogen", &mut x.rainbow);
+            ui.locked = locked;
+            ui.slider_reset(13, at(4), "Deckkraft", &mut x.alpha, (0.1, 1.0), 0.05, d.alpha);
+            ui.toggle(at(5), "Punkt in der Mitte", &mut x.dot);
+            ui.slider_reset(14, at(6), "Größe des Punkts", &mut x.dot_size, (1.0, 12.0), 1.0, d.dot_size);
+            ui.locked |= x.invert;
+            color(ui, 7, "Farbe des Punkts", CrossPart::Dot, x.dot_color);
+            ui.slider_reset(15, at(8), "Umriss", &mut x.outline, (0.0, 4.0), 1.0, d.outline);
+            color(ui, 9, "Farbe des Umrisses", CrossPart::Outline, x.outline_color);
+            ui.locked = locked;
+            if x.invert {
+                for (from, to) in [(2, 3), (7, 9)] {
+                    let (top, end) = (at(from), at(to));
+                    ui.fill(Rect { h: end.y + end.h - top.y, ..top }, ui.look.background, 0.55);
+                }
+            }
+        } else {
+            let names = Shape::ALL.map(Shape::name);
+            let now = Shape::ALL.iter().position(|k| *k == x.shape);
+            if let Some(i) = ui.stepper(at(1), "Form", &names, now) {
+                x.shape = Shape::ALL[i];
+            }
+            ui.slider_reset(10, at(4), "Breite", &mut x.length, (0.0, 30.0), 1.0, d.length);
+            ui.slider_reset(16, at(5), "Höhe", &mut x.height, (0.0, 30.0), 1.0, d.height);
+            ui.slider_reset(11, at(6), "Lücke", &mut x.gap, (0.0, 20.0), 1.0, d.gap);
+            ui.slider_reset(12, at(7), "Dicke", &mut x.thickness, (1.0, 8.0), 1.0, d.thickness);
+            ui.slider_reset(17, at(8), "Drehung", &mut x.rotation, (0.0, 355.0), 5.0, d.rotation);
+        }
+        let state = format!("{}: {}", t("Minecrafts Crosshair"), t(self.cross_state));
+        ui.text(line(b, 10, s), 12.0, ui.look.muted, Align::Left, state);
+        if let Some((part, field)) = clicked {
+            self.pick(c, Paint::Crosshair(part), field);
+        }
+        Action::None
+    }
 }
 
 /// Wählbare Zoom-Tasten.
@@ -659,6 +768,14 @@ fn key(ui: &mut Ui, r: Rect, text: &str, v: &mut u8) {
     let names = KEYS.map(|k| k.1);
     if let Some(i) = ui.stepper(r, text, &names, KEYS.iter().position(|k| k.0 == *v)) {
         *v = KEYS[i].0;
+    }
+}
+
+/// Auswahl aus benannten Werten.
+fn pick_one<T: Copy + PartialEq>(ui: &mut Ui, r: Rect, text: &str, all: &[(T, &str)], v: &mut T) {
+    let names: Vec<&str> = all.iter().map(|a| a.1).collect();
+    if let Some(i) = ui.stepper(r, text, &names, all.iter().position(|a| a.0 == *v)) {
+        *v = all[i].0;
     }
 }
 

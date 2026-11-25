@@ -4,6 +4,7 @@ pub mod chat;
 pub mod cross;
 pub mod panel;
 pub mod style;
+pub mod values;
 
 /// Bei jeder unverträglichen Änderung erhöhen; Plugins mit anderem Stand werden nicht geladen.
 pub const API: u32 = 1;

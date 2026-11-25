@@ -27,6 +27,7 @@ pub enum Field {
     Search,
     Name,
     Note,
+    Items,
 }
 
 struct Drag {
@@ -50,9 +51,16 @@ pub struct Editor {
     pub zoom_state: &'static str,
     pub apple_state: &'static str,
     pub cross_state: &'static str,
+    pub bright_state: &'static str,
+    /// Gegenstände, Effekte.
+    pub gear_states: [&'static str; 2],
+    /// Sekunden, für bewegte Farben in der Vorschau.
+    pub time: f32,
     pub(crate) picker: Option<Picker>,
     /// Auf der Design-Seite: das Fenster statt der Module.
     pub(crate) design_menu: bool,
+    /// Auf der Crosshair-Seite: Farben statt Form.
+    pub(crate) cross_colors: bool,
     /// Gewählte Seite der Zoom-Einstellungen.
     pub(crate) zoom_page: usize,
     /// Siehe `items`.
@@ -79,7 +87,9 @@ pub struct Editor {
 
 /// `native`: Größe von Minecrafts Chat-Anzeige, wenn sie den Platz unseres Chats einnimmt.
 pub fn items(p: &Profile, screen: (f32, f32), dpi: f32, native: Option<(f32, f32)>) -> Vec<(Kind, Rect)> {
-    let visible = p.modules.iter().filter(|(k, m)| m.enabled && k.placed());
+    // An der Schnellleiste klebt sie von selbst.
+    let free = |k: Kind| k != Kind::Armor || !p.armor.sticky;
+    let visible = p.modules.iter().filter(|(k, m)| m.enabled && k.placed() && free(**k));
     let rect = |k: Kind, m: &Module| {
         let unit = k.unit(screen, dpi);
         match native.filter(|_| k == Kind::Chat) {
@@ -87,10 +97,15 @@ pub fn items(p: &Profile, screen: (f32, f32), dpi: f32, native: Option<(f32, f32
             Some((w, h)) => {
                 Placement { scale: 1.0, w: 1.0, h: 1.0, ..m.place }.resolve(screen, (w / unit, h / unit), unit)
             }
-            None => p.place(k).resolve(screen, k.size(), unit),
+            None => p.place(k).resolve(screen, base(p, k), unit),
         }
     };
     visible.map(|(k, m)| (*k, rect(*k, m))).collect()
+}
+
+/// Größe ohne Maßstab; die Rüstung kann senkrecht stehen.
+fn base(p: &Profile, k: Kind) -> (f32, f32) {
+    if k == Kind::Armor { hud::armor_hud::size(&p.armor) } else { k.size() }
 }
 
 impl Editor {
@@ -118,8 +133,12 @@ impl Editor {
             zoom_state: "aus",
             apple_state: "aus",
             cross_state: "aus",
+            bright_state: "aus",
+            gear_states: ["aus"; 2],
+            time: 0.0,
             picker: None,
             design_menu: false,
+            cross_colors: false,
             zoom_page: 0,
             native: None,
         }
@@ -169,13 +188,15 @@ impl Editor {
             Field::Search => &mut self.search,
             Field::Name => &mut c.profile_mut().name,
             Field::Note => &mut c.profile_mut().note,
+            Field::Items => &mut c.profile_mut().items,
         };
+        let most = if field == Field::Items { 80 } else { 28 };
         match ch {
             '\u{8}' => {
                 text.pop();
             }
             '\r' => self.end_typing(c),
-            ch if !ch.is_control() && text.chars().count() < 28 => text.push(ch),
+            ch if !ch.is_control() && text.chars().count() < most => text.push(ch),
             _ => {}
         }
     }
@@ -301,11 +322,12 @@ impl Editor {
         }
         let fixed = kind == Kind::Chat && self.native.is_some();
         let scale = c.profile().place(kind).scale;
+        let size = base(c.profile(), kind);
         let Some(m) = c.profile_mut().modules.get_mut(&kind) else { return };
         if !fixed {
             let s = scale.clamp(0.25, 4.0) * unit;
-            m.place.w = r.w / (kind.size().0 * s);
-            m.place.h = r.h / (kind.size().1 * s);
+            m.place.w = r.w / (size.0 * s);
+            m.place.h = r.h / (size.1 * s);
         }
         m.place = editor::placement(r, screen, unit, m.place);
     }

@@ -21,13 +21,20 @@ pub enum MenuPart {
     Accent,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CrossPart {
+    Lines,
+    Dot,
+    Outline,
+}
+
 /// Welche Farbe geändert wird.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Paint {
     Design(Part),
     Module(Kind, Part),
     Menu(MenuPart),
-    Crosshair,
+    Crosshair(CrossPart),
 }
 
 impl Paint {
@@ -42,7 +49,14 @@ impl Paint {
         Some(match self {
             Paint::Design(p) => part(&mut c.profile_mut().design.style, p),
             Paint::Module(k, p) => part(&mut c.profile_mut().modules.get_mut(&k)?.style, p),
-            Paint::Crosshair => &mut c.profile_mut().crosshair.color,
+            Paint::Crosshair(p) => {
+                let x = &mut c.profile_mut().crosshair;
+                match p {
+                    CrossPart::Lines => &mut x.color,
+                    CrossPart::Dot => &mut x.dot_color,
+                    CrossPart::Outline => &mut x.outline_color,
+                }
+            }
             Paint::Menu(p) => {
                 let m = &mut c.menu;
                 match p {

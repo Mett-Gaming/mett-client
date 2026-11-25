@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 8;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Module {
@@ -49,6 +49,10 @@ impl Module {
             Kind::Keystrokes => (Anchor::BottomLeft, 16.0, -16.0),
             // Wie in der Java Edition: ganz links, 40 Pixel über dem unteren Rand.
             Kind::Chat => (Anchor::BottomLeft, 0.0, -hud::java_chat::BOTTOM),
+            // Rechts untereinander.
+            Kind::Armor => (Anchor::Right, -16.0, -70.0),
+            Kind::Potions => (Anchor::Right, -16.0, 60.0),
+            Kind::Items => (Anchor::BottomRight, -16.0, -16.0),
             // Übrige Module untereinander, damit sie sich beim Einschalten nicht verdecken.
             k => (Anchor::TopLeft, 16.0, 16.0 + 64.0 * (k as u8 - 1) as f32),
         };
@@ -67,11 +71,29 @@ impl Module {
 #[serde(default)]
 pub struct Profile {
     pub name: String,
+    #[serde(deserialize_with = "known")]
     pub modules: BTreeMap<Kind, Module>,
+    /// Früher ein eigener Schalter, heute das Modul „Crosshair“.
+    #[serde(skip_serializing)]
     pub crosshair_enabled: bool,
     pub note: String,
+    /// Was der Gegenstandszähler zählt, mit Kommas.
+    pub items: String,
+    pub armor: hud::armor_hud::Settings,
     pub design: Design,
     pub crosshair: Crosshair,
+}
+
+/// Module, die es hier nicht gibt, etwa aus einer anderen Fassung, stören nicht.
+fn known<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<Kind, Module>, D::Error> {
+    let all = BTreeMap::<String, serde_json::Value>::deserialize(d)?;
+    let mut out = BTreeMap::new();
+    for (name, value) in all {
+        if let Ok(kind) = serde_json::from_value::<Kind>(name.into()) {
+            out.insert(kind, serde_json::from_value(value).map_err(serde::de::Error::custom)?);
+        }
+    }
+    Ok(out)
 }
 
 impl Default for Profile {
@@ -81,8 +103,10 @@ impl Default for Profile {
             modules: Kind::ALL.map(|k| (k, Module::standard(k))).into(),
             crosshair_enabled: false,
             note: String::new(),
+            items: "arrow, ender_pearl, golden_apple".into(),
+            armor: Default::default(),
             design: Design::default(),
-            crosshair: Crosshair { length: 6.0, gap: 3.0, thickness: 2.0, dot: false, color: 0xE8E0D1, alpha: 0.9 },
+            crosshair: Crosshair::default(),
         }
     }
 }
@@ -92,6 +116,9 @@ impl Profile {
     fn complete(&mut self) {
         for k in Kind::ALL {
             self.modules.entry(k).or_insert_with(|| Module::standard(k));
+        }
+        if std::mem::take(&mut self.crosshair_enabled) {
+            self.modules.entry(Kind::Crosshair).and_modify(|m| m.enabled = true);
         }
     }
 
@@ -132,6 +159,8 @@ pub struct Config {
     /// AppleSkin: Sättigung und Erschöpfung zeigen.
     pub apple_saturation: bool,
     pub apple_exhaustion: bool,
+    /// Helligkeit, 1 ist Minecrafts höchste.
+    pub fullbright: f32,
     /// Eigene Chat-Eingabe; lädt dafür das Chat-Plugin ins Spiel.
     pub chat_input: bool,
     pub active: usize,
@@ -152,6 +181,7 @@ impl Default for Config {
             zoom: Default::default(),
             apple_saturation: true,
             apple_exhaustion: true,
+            fullbright: 10.0,
             chat_input: false,
             active: 0,
             profiles: vec![Profile::default()],
@@ -272,12 +302,19 @@ pub fn load(path: &Path) -> io::Result<Config> {
             m.global = m.style == Module::style(*k) && m.place.scale == 1.0;
         }
     }
+    if version < 7 {
+        // Früher gab es nur eine Länge, und der Punkt sah aus wie die Linien.
+        for x in c.profiles.iter_mut().map(|p| &mut p.crosshair) {
+            (x.height, x.dot_size, x.dot_color) = (x.length, x.thickness, x.color);
+        }
+    }
     if c.tab_list {
         // Aus dem Schalter wurde ein Modul.
         c.tab_list = false;
         c.profiles.iter_mut().filter_map(|p| p.modules.get_mut(&Kind::Players)).for_each(|m| m.enabled = true);
     }
     c.zoom = c.zoom.sane();
+    c.fullbright = if c.fullbright.is_finite() { c.fullbright.clamp(1.0, 15.0) } else { 10.0 };
     Ok(c)
 }
 
@@ -357,7 +394,7 @@ mod tests {
         let mut c = load(&p).unwrap();
         assert_eq!(c, Config::default());
         save(&p, &c).unwrap();
-        c.profile_mut().crosshair_enabled = true;
+        c.profile_mut().modules.get_mut(&Kind::Crosshair).unwrap().enabled = true;
         save(&p, &c).unwrap();
         assert_eq!(load(&p).unwrap(), c);
     }
@@ -369,7 +406,7 @@ mod tests {
             "clock":{"enabled":false,"place":{"anchor":"right","x":1.0,"y":2.0,"scale":1.5}}}"#;
         fs::write(&p, t).unwrap();
         let c = load(&p).unwrap();
-        assert!(!c.hide_in_menus && c.profile().crosshair_enabled && c.version == VERSION);
+        assert!(!c.hide_in_menus && c.profile().modules[&Kind::Crosshair].enabled && c.version == VERSION);
         let clock = &c.profile().modules[&Kind::Clock];
         // Größen sind seit Version 4 anfangs überall gleich.
         assert!(!clock.enabled && clock.place.scale == 1.0);
@@ -452,6 +489,18 @@ mod tests {
         assert_eq!(q.place(Kind::Chat).scale, 1.0);
         save(&p, &c).unwrap();
         assert_eq!(load(&p).unwrap(), c);
+    }
+
+    #[test]
+    fn unbekannte_module_stoeren_nicht() {
+        let p = file("fremd");
+        let m = r#"{"enabled":true,"place":{"anchor":"top-left","x":1.0,"y":2.0,"scale":1.0}}"#;
+        fs::write(&p, format!(r#"{{"version":8,"profiles":[{{"modules":{{"hitbox":{m},"cps":{m}}}}}]}}"#)).unwrap();
+        let c = load(&p).unwrap();
+        assert!(c.profile().modules[&Kind::Cps].enabled && c.profile().modules.len() == Kind::ALL.len());
+        // Ein bekanntes mit kaputtem Inhalt bleibt ein Fehler.
+        fs::write(&p, r#"{"version":8,"profiles":[{"modules":{"cps":7}}]}"#).unwrap();
+        assert!(load(&p).is_err());
     }
 
     #[test]

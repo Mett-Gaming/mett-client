@@ -9,6 +9,7 @@ use windows::core::Result;
 pub mod attributes;
 pub mod chat;
 pub mod commands;
+pub mod inventory;
 pub mod model;
 pub mod options;
 pub mod players;

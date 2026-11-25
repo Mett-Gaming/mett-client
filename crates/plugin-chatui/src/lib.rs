@@ -4,6 +4,7 @@ mod cursor;
 mod follow;
 mod panel;
 mod style;
+mod values;
 mod width;
 
 use cursor::Cursor;
@@ -14,6 +15,7 @@ use std::panic::catch_unwind;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering::SeqCst};
 use style::Style;
+use values::Value;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::System::Threading::*;
@@ -27,6 +29,7 @@ static MESSAGE: AtomicU32 = AtomicU32::new(0);
 static TARGET: Mutex<Option<Target>> = Mutex::new(None);
 static STYLE: Mutex<Option<Style>> = Mutex::new(None);
 static CURSOR: Mutex<Option<Cursor>> = Mutex::new(None);
+static VALUES: Mutex<[Option<Value>; mett_plugin::values::ALLOWED.len()]> = Mutex::new([None]);
 static KEEPER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -39,6 +42,19 @@ fn step(restore: bool) {
     style_step(restore);
     panel_step(restore);
     cursor_step(restore);
+    value_step(restore);
+}
+
+fn value_step(restore: bool) {
+    for slot in lock(&VALUES).iter_mut() {
+        let Some(v) = slot else { continue };
+        if restore {
+            v.order.target = None;
+        }
+        if !v.step() || v.order.target.is_none() {
+            *slot = None;
+        }
+    }
 }
 
 fn cursor_step(restore: bool) {
@@ -208,6 +224,39 @@ pub unsafe extern "system" fn mett_cursor_order(text: *const u16) -> u32 {
     .unwrap_or(answer::BAD_ORDER)
 }
 
+/// # Safety
+/// `text` zeigt auf nullterminierten UTF-16-Text.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn mett_value_order(text: *const u16) -> u32 {
+    catch_unwind(|| {
+        if text.is_null() || STOP.load(SeqCst) {
+            return answer::BAD_ORDER;
+        }
+        let text = unsafe { PCWSTR(text).to_string() }.unwrap_or_default();
+        let Some(o) = mett_plugin::values::Order::decode(&text) else { return answer::BAD_ORDER };
+        let (base, size) = (IMAGE[0].load(SeqCst), IMAGE[1].load(SeqCst));
+        if !(base..base + size).contains(&o.table) {
+            return answer::BAD_ORDER;
+        }
+        {
+            let slot = &mut lock(&VALUES)[o.which];
+            match slot {
+                // Der gemerkte Wert des Nutzers bleibt.
+                Some(v) if (v.order.at, v.order.info) == (o.at, o.info) => v.order = o,
+                Some(v) => {
+                    v.order.target = None;
+                    return answer::STALE;
+                }
+                None if o.target.is_none() => return answer::OK,
+                None => *slot = Some(Value::new(o)),
+            }
+        }
+        tell(false);
+        if lock(&VALUES)[o.which].is_some() == o.target.is_some() { answer::OK } else { answer::STALE }
+    })
+    .unwrap_or(answer::BAD_ORDER)
+}
+
 /// Läuft der Client noch, der diesen Auftrag gab?
 fn client_alive(watched: &mut Option<(u32, HANDLE)>, pid: u32) -> bool {
     unsafe {
@@ -227,6 +276,7 @@ fn keep(hook: HHOOK) {
         let pid = lock(&TARGET).as_ref().map(|t| t.order.client);
         let pid = pid.or_else(|| lock(&STYLE).as_ref().map(|s| s.order.client));
         let pid = pid.or_else(|| lock(&CURSOR).as_ref().map(|c| c.order.client));
+        let pid = pid.or_else(|| lock(&VALUES).iter().flatten().next().map(|v| v.order.client));
         if let Some(pid) = pid {
             tell(!client_alive(&mut client, pid));
         }
@@ -310,7 +360,12 @@ pub extern "system" fn mett_plugin_unload() {
         let window = HWND(WINDOW.load(SeqCst) as *mut _);
         let done = SendMessageTimeoutW(window, WM_NULL, WPARAM(0), LPARAM(0), SMTO_BLOCK, 3000, None);
         // Ein Ziel, das nicht zurückgestellt wurde, kann noch Rückrufe haben.
-        if done.0 == 0 || lock(&TARGET).is_some() || lock(&STYLE).is_some() || lock(&CURSOR).is_some() {
+        if done.0 == 0
+            || lock(&TARGET).is_some()
+            || lock(&STYLE).is_some()
+            || lock(&CURSOR).is_some()
+            || lock(&VALUES).iter().any(Option::is_some)
+        {
             let mut pinned = HMODULE::default();
             let flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN;
             let _ = GetModuleHandleExW(flags, PCWSTR(on_message as *const () as *const u16), &mut pinned);
