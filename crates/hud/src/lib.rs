@@ -3,9 +3,12 @@ use serde::{Deserialize, Serialize};
 
 pub mod appleskin;
 pub mod chat_input;
+pub mod color;
 pub mod editor;
 pub mod hints;
+pub mod icons;
 pub mod java_chat;
+pub mod lang;
 pub mod symbols;
 pub mod tab_list;
 pub mod ui;
@@ -119,11 +122,12 @@ pub enum Draw {
         align: Align,
         text: String,
     },
-    /// Ausschnitt aus den Symbolen von AppleSkin, `from` in Bildpunkten.
+    /// Ausschnitt aus einer Symboltafel, `from` in Bildpunkten. `color` färbt ein, Weiß lässt alles, wie es ist.
     Icon {
+        sheet: u8,
         rect: Rect,
         from: Rect,
-        alpha: f32,
+        color: Color,
     },
     /// Minecraft-Schrift; `unit` ist die Größe eines Schriftpixels.
     Game {
@@ -141,6 +145,10 @@ pub enum Align {
     Center,
     Right,
 }
+
+/// Symboltafeln für `Draw::Icon`.
+pub const SHEET_APPLESKIN: u8 = 0;
+pub const SHEET_ICONS: u8 = 1;
 
 /// Design-Tokens des Mett Launchers.
 pub mod theme {
@@ -231,6 +239,11 @@ impl Kind {
         if self == Kind::Chat { java_chat::unit(screen) } else { dpi }
     }
 
+    /// Aussehen lässt sich einstellen.
+    pub fn styled(self) -> bool {
+        self.placed() && self != Kind::Chat
+    }
+
     /// Ein Feld mit einer Zeile Text.
     pub fn label(self) -> bool {
         self.placed() && !matches!(self, Kind::Keystrokes | Kind::Chat)
@@ -316,7 +329,7 @@ pub fn keystrokes(at: Rect, style: &Style, keys: Keys, out: &mut Vec<Draw>) {
     key(84.0, 42.0, 40.0, 40.0, "D", keys.d);
     key(0.0, 84.0, 61.0, 40.0, "LMT", keys.lmb);
     key(63.0, 84.0, 61.0, 40.0, "RMT", keys.rmb);
-    key(0.0, 126.0, 124.0, 36.0, "Leertaste", keys.space);
+    key(0.0, 126.0, 124.0, 36.0, lang::t("Leertaste"), keys.space);
 }
 
 /// Die Schrift richtet sich nach der knapperen Seite.

@@ -1,6 +1,6 @@
 //! Sättigung und Erschöpfung an der Hungerleiste, wie in AppleSkin (Unlicense) und mit dessen Bilddatei.
 //! Alle Maße in Einheiten der Spieloberfläche: zehn Symbole zu 9, alle 8 eines, von rechts nach links.
-use crate::{Draw, Rect};
+use crate::{Draw, Rect, SHEET_APPLESKIN};
 use std::sync::OnceLock;
 
 const ICON: f32 = 9.0;
@@ -20,6 +20,16 @@ pub struct Atlas {
 }
 
 impl Atlas {
+    pub fn load(file: &'static [u8]) -> Option<Self> {
+        let mut d = png::Decoder::new(file);
+        d.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+        let mut r = d.read_info().ok()?;
+        let mut rgba = vec![0; r.output_buffer_size()];
+        let i = r.next_frame(&mut rgba).ok()?;
+        let right = i.color_type == png::ColorType::Rgba && rgba.len() == (i.width * i.height * 4) as usize;
+        right.then_some(Self { width: i.width, height: i.height, rgba })
+    }
+
     fn solid(&self, x: usize, y: usize) -> bool {
         self.rgba.get((y * self.width as usize + x) * 4 + 3).is_some_and(|a| *a > 0)
     }
@@ -27,17 +37,7 @@ impl Atlas {
 
 pub fn atlas() -> Option<&'static Atlas> {
     static ATLAS: OnceLock<Option<Atlas>> = OnceLock::new();
-    ATLAS.get_or_init(load).as_ref()
-}
-
-fn load() -> Option<Atlas> {
-    let mut d = png::Decoder::new(&include_bytes!("../../../assets/appleskin/icons.png")[..]);
-    d.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
-    let mut r = d.read_info().ok()?;
-    let mut rgba = vec![0; r.output_buffer_size()];
-    let i = r.next_frame(&mut rgba).ok()?;
-    let right = i.color_type == png::ColorType::Rgba && rgba.len() == (i.width * i.height * 4) as usize;
-    right.then_some(Atlas { width: i.width, height: i.height, rgba })
+    ATLAS.get_or_init(|| Atlas::load(include_bytes!("../../../assets/appleskin/icons.png"))).as_ref()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -73,7 +73,8 @@ pub fn draw(right: f32, top: f32, unit: f32, show: &Show, out: &mut Vec<Draw>) {
         // Auf ganze Punkte, sonst verschwimmt das Muster.
         let (l, t) = ((right + x * unit).round(), (top + y * unit).round());
         let (r, b) = ((right + (x + from.w) * unit).round(), (top + (y + from.h) * unit).round());
-        out.push(Draw::Icon { rect: Rect { x: l, y: t, w: r - l, h: b - t }, from, alpha });
+        let rect = Rect { x: l, y: t, w: r - l, h: b - t };
+        out.push(Draw::Icon { sheet: SHEET_APPLESKIN, rect, from, color: [1.0, 1.0, 1.0, alpha] });
     };
     if let Some(e) = show.exhaustion.filter(|e| e.is_finite()) {
         // AppleSkin zeichnet den Balken hinter die Symbole. Wir liegen darüber und lassen sie deshalb aus.

@@ -17,6 +17,7 @@ Copy-Item "$bau\mett_hud.dll" "$paket\plugins\hud.dll"
 Copy-Item "$bau\chat.dll", "$bau\chatui.dll", "$bau\zoom.dll" "$paket\plugins"
 Copy-Item 'assets\fonts\Archivo-OFL.txt' "$paket\Lizenzen\Archivo-OFL.txt"
 Copy-Item 'assets\appleskin\LICENSE.txt' "$paket\Lizenzen\AppleSkin-Unlicense.txt"
+Copy-Item 'assets\game-icons\LIZENZ.txt' "$paket\Lizenzen\game-icons.txt"
 Copy-Item 'packaging\Rust-Bibliotheken.txt' "$paket\Lizenzen\Rust-Bibliotheken.txt"
 $zip = "dist\MettClient-$Version.zip"
 if (Test-Path $zip) { Remove-Item $zip }

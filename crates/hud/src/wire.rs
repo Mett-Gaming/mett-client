@@ -39,9 +39,10 @@ pub fn encode(items: &[Draw]) -> Vec<u8> {
                 });
                 t(&mut o, text);
             }
-            Draw::Icon { rect: r, from: s, alpha } => {
+            Draw::Icon { sheet, rect: r, from: s, color: c } => {
                 o.push(4);
-                f(&mut o, &[r.x, r.y, r.w, r.h, s.x, s.y, s.w, s.h, *alpha]);
+                o.push(*sheet);
+                f(&mut o, &[r.x, r.y, r.w, r.h, s.x, s.y, s.w, s.h, c[0], c[1], c[2], c[3]]);
             }
             Draw::Game { x, y, unit, color: c, text } => {
                 o.push(3);
@@ -117,7 +118,7 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<Draw>> {
                 text: r.text()?,
             },
             3 => Draw::Game { x: r.f32()?, y: r.f32()?, unit: r.f32()?, color: r.color()?, text: r.text()? },
-            4 => Draw::Icon { rect: r.rect()?, from: r.rect()?, alpha: r.f32()? },
+            4 => Draw::Icon { sheet: r.byte()?, rect: r.rect()?, from: r.rect()?, color: r.color()? },
             _ => return None,
         });
     }
@@ -135,7 +136,7 @@ mod tests {
             Draw::Box { rect, radius: 6.0, color },
             Draw::Outline { rect, radius: 0.0, width: 2.0, color },
             Draw::Text { rect, size: 14.0, color, align: Align::Right, text: "Grüße 😀".into() },
-            Draw::Icon { rect, from: Rect { x: 27.0, y: 0.0, w: 9.0, h: 9.0 }, alpha: 0.75 },
+            Draw::Icon { sheet: 1, rect, from: Rect { x: 27.0, y: 0.0, w: 9.0, h: 9.0 }, color },
             Draw::Game { x: -3.0, y: 9.0, unit: 3.0, color, text: String::new() },
         ]
     }

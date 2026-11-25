@@ -54,3 +54,6 @@ Offen: FPS-Werte, Discord-Anzeige über den Launcher, alles in Minecraft.
 - 📐 Textfelder haben alle dieselbe Vorgabegröße (130 × 30; System, Musik und Notiz 230 breit). Einstellungen unter Version 4 werden einmal darauf gesetzt, Plätze bleiben; Tasten und Chat sind ausgenommen.
 - 🧹 „Alles zurücksetzen“ (Optionen, zwei Klicks): alle Einstellungen auf Anfang, ein Profil, alle Module und das Crosshair aus. Vorher Sicherung `vor-dem-zuruecksetzen.bak` im Profil-Ordner; ohne Sicherung passiert nichts.
 - 📏 Textfelder sind anfangs 60 statt 30 hoch (Schrift 25 % größer, lange Felder 290 statt 230 breit). Einstellungen Version 5: selbst gewählte Größen und Plätze bleiben, Unverändertes rückt auf die neue Anordnung.
+- 🎨 Design-Seite: globales Design je Profil für alle Module (je Modul „Globales Design benutzen“, anfangs an) und Aussehen des Menüfensters. Farbwähler statt fester Farben. Einstellungen Version 6: selbst gestaltete Module behalten ihr Aussehen.
+- 🌍 Deutsch oder Englisch nach `game_language` in `options.txt`, alles andere wird Englisch (`hud::lang`; ein Test meldet fehlende Übersetzungen).
+- 🧩 Symbole von game-icons.net (CC BY 3.0). Module alphabetisch, rechte Umschalttaste öffnet das Menü direkt, die untere Leiste ist weg.

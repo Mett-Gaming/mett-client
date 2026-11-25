@@ -1,5 +1,6 @@
 //! HUD-Editor und Einstellungsmenü. Ohne Windows, damit die Bedienung testbar bleibt.
 use crate::menu::{self, Page};
+use crate::picker::Picker;
 use config::{Config, Module, Profile};
 use hud::editor::{self, Edges, Guide};
 use hud::ui::{Input, Ui};
@@ -8,7 +9,7 @@ use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum View {
-    /// Nur Module und eine kleine Leiste.
+    /// Nur das HUD, zum Anordnen.
     Compact,
     /// Mit Einstellungsfenster.
     Full,
@@ -49,6 +50,9 @@ pub struct Editor {
     pub zoom_state: &'static str,
     pub apple_state: &'static str,
     pub cross_state: &'static str,
+    pub(crate) picker: Option<Picker>,
+    /// Auf der Design-Seite: das Fenster statt der Module.
+    pub(crate) design_menu: bool,
     /// Gewählte Seite der Zoom-Einstellungen.
     pub(crate) zoom_page: usize,
     /// Siehe `items`.
@@ -71,8 +75,6 @@ pub struct Editor {
     /// Bildschirm und DPI des letzten Bildes.
     last: ((f32, f32), f32),
     active: Option<u32>,
-    /// In diesem Bild wurde zurückgenommen; das ist selbst keine neue Änderung.
-    undid: bool,
 }
 
 /// `native`: Größe von Minecrafts Chat-Anzeige, wenn sie den Platz unseres Chats einnimmt.
@@ -85,7 +87,7 @@ pub fn items(p: &Profile, screen: (f32, f32), dpi: f32, native: Option<(f32, f32
             Some((w, h)) => {
                 Placement { scale: 1.0, w: 1.0, h: 1.0, ..m.place }.resolve(screen, (w / unit, h / unit), unit)
             }
-            None => m.place.resolve(screen, k.size(), unit),
+            None => p.place(k).resolve(screen, k.size(), unit),
         }
     };
     visible.map(|(k, m)| (*k, rect(*k, m))).collect()
@@ -109,7 +111,6 @@ impl Editor {
             guides: vec![],
             last: ((0.0, 0.0), 1.0),
             active: None,
-            undid: false,
             chat_state: "aus",
             panel_state: "aus",
             style_state: "aus",
@@ -117,6 +118,8 @@ impl Editor {
             zoom_state: "aus",
             apple_state: "aus",
             cross_state: "aus",
+            picker: None,
+            design_menu: false,
             zoom_page: 0,
             native: None,
         }
@@ -150,10 +153,17 @@ impl Editor {
     }
 
     pub fn is_typing(&self) -> bool {
-        self.typing.is_some()
+        self.typing.is_some() || self.picker.as_ref().is_some_and(|p| p.typed.is_some())
     }
 
     pub fn char(&mut self, c: &mut Config, ch: char) {
+        if let Some(p) = self.picker.as_mut().filter(|p| p.typed.is_some()) {
+            match ch {
+                '\r' => p.typed = None,
+                ch => p.char(ch, c),
+            }
+            return;
+        }
         let Some(field) = self.typing else { return };
         let text = match field {
             Field::Search => &mut self.search,
@@ -170,9 +180,17 @@ impl Editor {
         }
     }
 
+    /// War einer offen?
+    pub fn close_picker(&mut self) -> bool {
+        self.picker.take().is_some()
+    }
+
     pub fn end_typing(&mut self, c: &mut Config) {
+        if let Some(p) = &mut self.picker {
+            p.typed = None;
+        }
         if self.typing.take() == Some(Field::Name) && c.profile().name.trim().is_empty() {
-            c.profile_mut().name = "Profil".into();
+            c.profile_mut().name = hud::lang::t("Profil").into();
         }
     }
 
@@ -188,10 +206,10 @@ impl Editor {
         // Regler, Schalter usw. ändern das Profil direkt; der Stand vor dem Klick landet im Rückgängig-Speicher.
         let before = (input.pressed || input.right_pressed).then(|| c.profile().clone());
         let (rail, main) = menu::rects(screen, dpi);
-        let bar = bar_rect(screen, dpi);
         let full = self.view == View::Full;
         let over = |r: Rect| r.contains(input.mouse);
-        let over_ui = if full { over(rail) || over(main) } else { over(bar) };
+        // Solange eine Farbe gewählt wird, bewegt sich nichts.
+        let over_ui = full && (over(rail) || over(main) || self.picker.is_some());
         if !over_ui || self.drag.is_some() {
             self.modules(c, screen, dpi, input, out);
         } else {
@@ -201,16 +219,14 @@ impl Editor {
         self.draw_size(c, screen, dpi, out);
 
         let mut active = self.active.take();
-        let mut ui = Ui { input, active: &mut active, out, scale: dpi };
+        let mut ui = Ui { look: c.menu, locked: false, input, active: &mut active, out, scale: dpi };
         // Öffnet ein Klick auf ein Modul erst das Menü, darf derselbe Klick darin nichts auslösen.
         let action = match (full, self.view) {
             (true, _) => self.menu(&mut ui, c, rail, main),
-            (false, View::Compact) => self.bar(&mut ui, c, bar),
-            (false, View::Full) => Action::None,
+            (false, _) => Action::None,
         };
         self.active = active;
         if let Some(p) = before
-            && !std::mem::take(&mut self.undid)
             && p.name == c.profile().name
             && p != *c.profile()
         {
@@ -264,7 +280,7 @@ impl Editor {
         let (rail, main) = menu::rects(screen, dpi);
         match self.view {
             View::Full => rail.contains(mouse) || main.contains(mouse),
-            View::Compact => bar_rect(screen, dpi).contains(mouse),
+            View::Compact => false,
         }
     }
 
@@ -284,9 +300,10 @@ impl Editor {
             self.native = Some((w, new));
         }
         let fixed = kind == Kind::Chat && self.native.is_some();
+        let scale = c.profile().place(kind).scale;
         let Some(m) = c.profile_mut().modules.get_mut(&kind) else { return };
         if !fixed {
-            let s = m.place.scale.clamp(0.25, 4.0) * unit;
+            let s = scale.clamp(0.25, 4.0) * unit;
             m.place.w = r.w / (kind.size().0 * s);
             m.place.h = r.h / (kind.size().1 * s);
         }
@@ -367,13 +384,7 @@ impl Editor {
             if Some(k) == under {
                 let r = pen(rect, dpi);
                 out.push(Draw::Box { rect: r, radius: 4.0 * dpi, color: rgb(theme::ACCENT, 1.0) });
-                out.push(Draw::Text {
-                    rect: r,
-                    size: 13.0 * dpi,
-                    color: rgb(theme::APP, 1.0),
-                    align: Align::Center,
-                    text: "✎".into(),
-                });
+                hud::icons::draw(hud::icons::Icon::Pencil, r, 13.0 * dpi, rgb(theme::APP, 1.0), out);
             }
         }
     }
@@ -403,25 +414,6 @@ impl Editor {
             out.push(Draw::Box { rect, radius: 0.0, color: rgb(theme::ACCENT_HOVER, 0.8) });
         }
     }
-
-    fn bar(&mut self, ui: &mut Ui, c: &mut Config, bar: Rect) -> Action {
-        let s = ui.scale;
-        ui.panel(bar);
-        let at = |i: f32| Rect { x: bar.x + (8.0 + i * 128.0) * s, y: bar.y + 8.0 * s, w: 120.0 * s, h: 32.0 * s };
-        if ui.button(at(0.0), "Einstellungen", false) {
-            self.view = View::Full;
-        }
-        if ui.button(at(1.0), "Rückgängig", false) {
-            self.undo(c);
-            self.undid = true;
-        }
-        if ui.button(at(2.0), "Fertig", true) { Action::Close } else { Action::None }
-    }
-}
-
-fn bar_rect(screen: (f32, f32), dpi: f32) -> Rect {
-    let (w, h) = (392.0 * dpi, 48.0 * dpi);
-    Rect { x: (screen.0 - w) / 2.0, y: screen.1 - h - 12.0 * dpi, w, h }
 }
 
 /// Stift in der oberen rechten Ecke eines Moduls.
@@ -614,7 +606,7 @@ mod tests {
     }
 
     fn card(e: &Editor, k: Kind) -> Rect {
-        let i = Kind::ALL.iter().position(|x| *x == k).unwrap();
+        let i = menu::sorted().iter().position(|x| *x == k).unwrap();
         menu::card_rect(menu::rects(S, 1.0).1, 1.0, i - e.scroll * 2)
     }
 
@@ -639,7 +631,7 @@ mod tests {
         for _ in 0..20 {
             e.frame(&mut c, S, 1.0, &i, &mut vec![]);
         }
-        let last = card(&e, Kind::Note);
+        let last = card(&e, *menu::sorted().last().unwrap());
         assert!(e.scroll > 0 && last.y + last.h <= main.y + main.h);
         e.typing = Some(Field::Search);
         "spotify".chars().for_each(|ch| e.char(&mut c, ch));
@@ -700,6 +692,66 @@ mod tests {
         click(&mut e, &mut c);
         assert!(c.chat_java);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn module_stehen_alphabetisch() {
+        let names: Vec<String> = menu::sorted().iter().map(|k| hud::lang::t(k.name()).to_lowercase()).collect();
+        assert!(names.is_sorted() && names.len() == Kind::ALL.len());
+    }
+
+    #[test]
+    fn globales_design_gilt_bis_es_ausgeschaltet_wird() {
+        let mut c = Config::default();
+        c.profile_mut().design.scale = 2.0;
+        assert_eq!(rect(&c, Kind::Cps).w, 260.0);
+        let mut e = Editor::new(View::Full, None);
+        e.page = Page::Detail(Kind::Cps);
+        let b = menu::body_of(S, 1.0);
+        // Gesperrt: Der Regler reagiert nicht.
+        let size = (b.x + b.w * 0.45, b.y + 2.0 * 38.0 + 16.0);
+        step(&mut e, &mut c, size, true, true);
+        step(&mut e, &mut c, size, false, false);
+        assert_eq!((c.profile().design.scale, c.profile().modules[&Kind::Cps].place.scale), (2.0, 1.0));
+        let toggle = (b.x + b.w - 10.0, b.y + 38.0 + 10.0);
+        step(&mut e, &mut c, toggle, true, true);
+        step(&mut e, &mut c, toggle, false, false);
+        assert!(!c.profile().modules[&Kind::Cps].global);
+        assert_eq!(rect(&c, Kind::Cps).w, 130.0);
+        step(&mut e, &mut c, size, true, true);
+        step(&mut e, &mut c, size, false, false);
+        assert!(c.profile().modules[&Kind::Cps].place.scale < 1.0);
+    }
+
+    #[test]
+    fn farbwaehler_oeffnet_aendert_und_schliesst() {
+        let mut c = Config::default();
+        let mut e = Editor::new(View::Full, None);
+        e.page = Page::Design;
+        let b = menu::body_of(S, 1.0);
+        let field = (b.x + b.w - 60.0, b.y + 5.0 * 38.0 + 16.0);
+        step(&mut e, &mut c, field, true, true);
+        step(&mut e, &mut c, field, false, false);
+        let r = e.picker.as_ref().unwrap().rect(menu::rects(S, 1.0).1, 1.0);
+        // Oben rechts im Feld: volle Sättigung und Helligkeit.
+        let before = c.profile().design.style.background;
+        let corner = (r.x + r.w - 13.0, r.y + 13.0);
+        step(&mut e, &mut c, corner, true, true);
+        step(&mut e, &mut c, corner, false, false);
+        let now = c.profile().design.style.background;
+        assert!(now != before && hud::color::to_hsv(now).2 > 0.95);
+        // Eingabe als Hexzahl.
+        let hex = (r.x + 40.0, r.y + 12.0 + 140.0 + 10.0 + 14.0 + 12.0 + 16.0);
+        step(&mut e, &mut c, hex, true, true);
+        assert!(e.is_typing());
+        "12z3aBcC".chars().for_each(|ch| e.char(&mut c, ch));
+        assert_eq!(c.profile().design.style.background, 0x123ABC);
+        // Ein Klick daneben schließt und löst sonst nichts aus.
+        let all = c.clone();
+        let rail = menu::rects(S, 1.0).0;
+        let done = (rail.x + 40.0, rail.y + rail.h - 50.0);
+        assert_eq!(step(&mut e, &mut c, done, true, true), Action::None);
+        assert!(e.picker.is_none() && c == all);
     }
 
     #[test]

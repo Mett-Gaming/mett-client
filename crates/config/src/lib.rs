@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Module {
@@ -13,6 +13,27 @@ pub struct Module {
     pub place: Placement,
     #[serde(default)]
     pub style: Style,
+    /// Aussehen und Größe vom globalen Design.
+    #[serde(default = "yes")]
+    pub global: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Aussehen und Größe für alle Module, die es benutzen.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Design {
+    pub scale: f32,
+    pub style: Style,
+}
+
+impl Default for Design {
+    fn default() -> Self {
+        Self { scale: 1.0, style: Style::default() }
+    }
 }
 
 impl Module {
@@ -33,7 +54,12 @@ impl Module {
         };
         // Nur das Wichtigste ist von Anfang an sichtbar.
         let enabled = matches!(kind, Kind::Keystrokes | Kind::Cps | Kind::Clock);
-        Self { enabled, place: Placement { anchor, x, y, scale: 1.0, w: 1.0, h: 1.0 }, style: Self::style(kind) }
+        Self {
+            enabled,
+            place: Placement { anchor, x, y, scale: 1.0, w: 1.0, h: 1.0 },
+            style: Self::style(kind),
+            global: true,
+        }
     }
 }
 
@@ -44,6 +70,7 @@ pub struct Profile {
     pub modules: BTreeMap<Kind, Module>,
     pub crosshair_enabled: bool,
     pub note: String,
+    pub design: Design,
     pub crosshair: Crosshair,
 }
 
@@ -54,6 +81,7 @@ impl Default for Profile {
             modules: Kind::ALL.map(|k| (k, Module::standard(k))).into(),
             crosshair_enabled: false,
             note: String::new(),
+            design: Design::default(),
             crosshair: Crosshair { length: 6.0, gap: 3.0, thickness: 2.0, dot: false, color: 0xE8E0D1, alpha: 0.9 },
         }
     }
@@ -67,10 +95,19 @@ impl Profile {
         }
     }
 
-    pub fn apply_to_all(&mut self, style: Style) {
-        for m in self.modules.values_mut() {
-            m.style = style;
-        }
+    fn global(&self, k: Kind) -> bool {
+        k.styled() && self.modules[&k].global
+    }
+
+    /// Aussehen, das gerade gilt.
+    pub fn style(&self, k: Kind) -> Style {
+        if self.global(k) { self.design.style } else { self.modules[&k].style }
+    }
+
+    /// Platz mit der Größe, die gerade gilt.
+    pub fn place(&self, k: Kind) -> Placement {
+        let place = self.modules[&k].place;
+        if self.global(k) { Placement { scale: self.design.scale, ..place } } else { place }
     }
 }
 
@@ -80,6 +117,8 @@ pub struct Config {
     pub version: u32,
     pub hide_in_menus: bool,
     pub snap: bool,
+    /// Aussehen des Menüfensters.
+    pub menu: hud::ui::Look,
     /// So viele Nachrichten zeigt Minecrafts Anzeige höchstens.
     pub chat_entries: u32,
     /// Nachrichten sanft ausblenden statt sie einfach verschwinden zu lassen.
@@ -105,6 +144,7 @@ impl Default for Config {
             version: VERSION,
             hide_in_menus: true,
             snap: true,
+            menu: Default::default(),
             chat_entries: 10,
             chat_fade: true,
             chat_java: false,
@@ -193,7 +233,7 @@ pub fn load(path: &Path) -> io::Result<Config> {
     let value: serde_json::Value = serde_json::from_str(&text).map_err(io::Error::other)?;
     let version = value["version"].as_u64().unwrap_or(1);
     if version > VERSION as u64 {
-        return Err(io::Error::other(format!("Version {version} ist neuer als dieses Programm")));
+        return Err(io::Error::other(format!("{} ({version})", hud::lang::t("Neuer als dieses Programm"))));
     }
     let value = if version < 2 { from_v1(value) } else { value };
     let mut c = serde_json::from_value::<Config>(value).map(Config::repair).map_err(io::Error::other)?;
@@ -224,6 +264,12 @@ pub fn load(path: &Path) -> io::Result<Config> {
             if (p.anchor, p.x, p.y) == (standard.anchor, 16.0, 16.0 + 34.0 * (*k as u8 - 1) as f32) {
                 p.y = standard.y;
             }
+        }
+    }
+    if version < 6 {
+        // Seit Version 6 gibt es ein globales Design. Wer ein Modul selbst gestaltet hat, behält es.
+        for (k, m) in c.profiles.iter_mut().flat_map(|p| &mut p.modules).filter(|(k, _)| k.styled()) {
+            m.global = m.style == Module::style(*k) && m.place.scale == 1.0;
         }
     }
     if c.tab_list {
@@ -381,6 +427,29 @@ mod tests {
         assert_eq!((place(Kind::Fps).y, place(Kind::Fps).h * Kind::Fps.size().1), (300.0, 45.0));
         assert_eq!((place(Kind::Note).y, place(Kind::Note).h), (301.0, 1.0));
         // Nur einmal.
+        save(&p, &c).unwrap();
+        assert_eq!(load(&p).unwrap(), c);
+    }
+
+    #[test]
+    fn eigenes_aussehen_bleibt_neben_dem_globalen() {
+        let p = file("design");
+        let place = r#""place":{"anchor":"top-left","x":1.0,"y":2.0,"scale":1.0}"#;
+        let t = format!(
+            r#"{{"version":5,"profiles":[{{"modules":{{"cps":{{"enabled":true,{place}}},
+            "fps":{{"enabled":true,{place},"style":{{"radius":0.0}}}},"keystrokes":{{"enabled":true,
+            "place":{{"anchor":"top-left","x":1.0,"y":2.0,"scale":1.5}}}}}}}}]}}"#
+        );
+        fs::write(&p, t).unwrap();
+        let mut c = load(&p).unwrap();
+        c.profile_mut().design = Design { scale: 2.0, style: Style { radius: 9.0, ..Style::default() } };
+        let q = c.profile();
+        assert!(q.modules[&Kind::Cps].global && !q.modules[&Kind::Fps].global);
+        assert_eq!((q.style(Kind::Cps).radius, q.style(Kind::Fps).radius), (9.0, 0.0));
+        assert_eq!((q.place(Kind::Cps).scale, q.place(Kind::Keystrokes).scale), (2.0, 1.5));
+        // Der Chat hat sein eigenes Aussehen.
+        assert_eq!(q.style(Kind::Chat), Module::standard(Kind::Chat).style);
+        assert_eq!(q.place(Kind::Chat).scale, 1.0);
         save(&p, &c).unwrap();
         assert_eq!(load(&p).unwrap(), c);
     }

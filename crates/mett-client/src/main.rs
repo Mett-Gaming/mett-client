@@ -15,6 +15,7 @@ mod marker;
 mod menu;
 mod pack;
 mod panel_link;
+mod picker;
 mod ping_link;
 mod players_link;
 mod plugins;
@@ -43,8 +44,14 @@ fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
     APP.with(|a| a.try_borrow_mut().ok()?.as_mut().map(f))
 }
 
+/// Sprache wie in Minecraft.
+pub fn set_language() {
+    let options = focus::options_file().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    hud::lang::set_from(&options);
+}
+
 fn message(text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
-    unsafe { MessageBoxW(None, &HSTRING::from(text), w!("Mett-Client"), style) }
+    unsafe { MessageBoxW(None, &HSTRING::from(hud::lang::t(text)), w!("Mett-Client"), style) }
 }
 
 /// Bedrock starten, falls nötig. `None` = Abbruch, sonst ob beim Warten ein Zeitlimit gilt.
@@ -81,7 +88,7 @@ fn load_config() -> (config::Config, Option<std::path::PathBuf>) {
     match path.as_ref().map(|p| config::load(p)) {
         Some(Ok(c)) => (c, path),
         Some(Err(e)) => {
-            let text = format!("Einstellungen nicht lesbar, es gelten Standardwerte.\n\n{e}");
+            let text = format!("{}\n\n{e}", hud::lang::t("Einstellungen nicht lesbar, es gelten Standardwerte."));
             message(&text, MB_OK | MB_ICONWARNING);
             (config::Config::default(), None)
         }
@@ -115,6 +122,7 @@ fn run() -> Result<i32> {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+        set_language();
         let args: Vec<String> = std::env::args().collect();
         let custom = args.iter().position(|a| a == "--exe").and_then(|i| args.get(i + 1)).cloned();
 
@@ -176,7 +184,7 @@ fn run() -> Result<i32> {
 
 fn main() {
     let code = run().unwrap_or_else(|e| {
-        message(&format!("Mett-Client konnte nicht starten:\n{e}"), MB_OK | MB_ICONERROR);
+        message(&format!("{}\n{e}", hud::lang::t("Mett-Client konnte nicht starten:")), MB_OK | MB_ICONERROR);
         1
     });
     std::process::exit(code);

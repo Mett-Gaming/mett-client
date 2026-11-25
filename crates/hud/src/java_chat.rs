@@ -202,7 +202,7 @@ pub fn native_sample(
     out: &mut Vec<Draw>,
 ) {
     let room = width / unit - 2.0 * n.left;
-    let rows: Vec<Row> = SAMPLE.iter().flat_map(|t| wrap(&parse(t, 0xFFFFFF), room, advance)).collect();
+    let rows: Vec<Row> = SAMPLE.iter().flat_map(|t| wrap(&parse(crate::lang::t(t), 0xFFFFFF), room, advance)).collect();
     let h = n.line * unit;
     for (i, row) in rows.iter().rev().cycle().take(count).enumerate() {
         let y = at.1 - (i + 1) as f32 * h;

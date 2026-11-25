@@ -143,8 +143,8 @@ fn tray_menu(hwnd: HWND) -> Result<()> {
         let on = with_app(|a| a.hud_on).unwrap_or(true);
         let menu = CreatePopupMenu()?;
         let check = if on { MF_CHECKED } else { MF_UNCHECKED };
-        AppendMenuW(menu, MF_STRING | check, CMD_TOGGLE, w!("HUD anzeigen"))?;
-        AppendMenuW(menu, MF_STRING, CMD_QUIT, w!("Mett-Client beenden"))?;
+        AppendMenuW(menu, MF_STRING | check, CMD_TOGGLE, &HSTRING::from(hud::lang::t("HUD anzeigen")))?;
+        AppendMenuW(menu, MF_STRING, CMD_QUIT, &HSTRING::from(hud::lang::t("Mett-Client beenden")))?;
         let mut p = POINT::default();
         GetCursorPos(&mut p)?;
         let _ = SetForegroundWindow(hwnd);

@@ -19,7 +19,8 @@ pub struct Painter {
     symbols: Symbols,
     /// Erst beim Zeichnen angelegt.
     sheets: std::cell::RefCell<std::collections::BTreeMap<u8, ID2D1Bitmap1>>,
-    icons: std::cell::OnceCell<Option<ID2D1Bitmap1>>,
+    /// Symboltafeln je Farbe.
+    icons: std::cell::RefCell<std::collections::HashMap<(u8, u32), ID2D1Bitmap1>>,
     /// Schriftformate nach Größe und Ausrichtung; jedes Bild neu anlegen wäre teuer.
     formats: std::cell::RefCell<std::collections::HashMap<(u32, u8), IDWriteTextFormat>>,
 }
@@ -94,10 +95,14 @@ impl Painter {
                         let rr = D2D1_ROUNDED_RECT { rect: rectf(&r), radiusX: *radius, radiusY: *radius };
                         self.ctx.DrawRoundedRectangle(&rr, &self.brush, *width, None);
                     }
-                    Draw::Icon { rect, from, alpha } => {
-                        let Some(b) = self.icons.get_or_init(|| self.icon_sheet()) else { continue };
-                        let nearest = D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
-                        self.ctx.DrawBitmap(b, Some(&rectf(rect)), *alpha, nearest, Some(&rectf(from)), None);
+                    Draw::Icon { sheet, rect, from, color: c } => {
+                        let Some(b) = self.icon_sheet(*sheet, *c) else { continue };
+                        // Pixelbilder bleiben kantig, die großen Menüsymbole werden sauber verkleinert.
+                        let mode = match *sheet {
+                            hud::SHEET_APPLESKIN => D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                            _ => D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                        };
+                        self.ctx.DrawBitmap(&b, Some(&rectf(rect)), c[3], mode, Some(&rectf(from)), None);
                     }
                     Draw::Game { x, y, unit, color: c, text } => {
                         let Some(f) = &self.game_font else { continue };
@@ -242,14 +247,24 @@ impl Painter {
         }
     }
 
-    /// Die Symbole von AppleSkin; ohne sie wird nur das nicht gezeichnet.
-    fn icon_sheet(&self) -> Option<ID2D1Bitmap1> {
-        let a = hud::appleskin::atlas()?;
+    /// Eingefärbte Tafel; ohne sie wird nur das Symbol nicht gezeichnet.
+    fn icon_sheet(&self, sheet: u8, c: Color) -> Option<ID2D1Bitmap1> {
+        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let tint = [byte(c[0]), byte(c[1]), byte(c[2])];
+        let key = (sheet, tint[0] << 16 | tint[1] << 8 | tint[2]);
+        if let Some(b) = self.icons.borrow().get(&key) {
+            return Some(b.clone());
+        }
+        let a = match sheet {
+            hud::SHEET_APPLESKIN => hud::appleskin::atlas()?,
+            hud::SHEET_ICONS => hud::icons::atlas()?,
+            _ => return None,
+        };
         let mut px = a.rgba.clone();
         for p in px.as_chunks_mut::<4>().0 {
             let k = p[3] as u32;
-            let m = |c: u8| (c as u32 * k / 255) as u8;
-            *p = [m(p[2]), m(p[1]), m(p[0]), p[3]];
+            let m = |c: u8, t: u32| (c as u32 * t / 255 * k / 255) as u8;
+            *p = [m(p[2], tint[2]), m(p[1], tint[1]), m(p[0], tint[0]), p[3]];
         }
         let props = D2D1_BITMAP_PROPERTIES1 {
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -261,7 +276,14 @@ impl Painter {
             ..Default::default()
         };
         let size = D2D_SIZE_U { width: a.width, height: a.height };
-        unsafe { self.ctx.CreateBitmap(size, Some(px.as_ptr().cast()), a.width * 4, &props) }.ok()
+        let b = unsafe { self.ctx.CreateBitmap(size, Some(px.as_ptr().cast()), a.width * 4, &props) }.ok()?;
+        let mut icons = self.icons.borrow_mut();
+        // Beim Wählen einer Farbe entstehen viele.
+        if icons.len() >= 12 {
+            icons.clear();
+        }
+        icons.insert(key, b.clone());
+        Some(b)
     }
 
     /// Zeichnet ein Symbol, wenn seine Tafel da ist.
@@ -480,7 +502,12 @@ mod tests {
     #[test]
     fn appleskin_symbole_kommen_unveraendert_an() {
         let from = Rect { x: 27.0, y: 0.0, w: 9.0, h: 9.0 };
-        let icon = Draw::Icon { rect: Rect { x: 0.0, y: 0.0, w: 27.0, h: 27.0 }, from, alpha: 1.0 };
+        let icon = Draw::Icon {
+            sheet: hud::SHEET_APPLESKIN,
+            rect: Rect { x: 0.0, y: 0.0, w: 27.0, h: 27.0 },
+            from,
+            color: [1.0; 4],
+        };
         // Ein Punkt der Bilddatei mit Farbe, einer ohne.
         let a = hud::appleskin::atlas().unwrap();
         let px = |x: usize, y: usize| &a.rgba[(y * 256 + x) * 4..][..4];

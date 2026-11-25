@@ -8,7 +8,7 @@ STARTEN
   Nichts bleibt nach dem Spiel zurück, nur deine Einstellungen.
 
 BEDIENEN
-  Rechte Umschalttaste: HUD bearbeiten. Doppelt, oder zusammen mit der linken: Menü.
+  Rechte Umschalttaste öffnet und schließt das Menü.
   Esc: fertig.
 
 GUT ZU WISSEN
@@ -17,3 +17,10 @@ GUT ZU WISSEN
   Windows oder ein Virenscanner kann warnen, weil die Dateien nicht signiert sind.
   Nach einem Minecraft-Update kann eine Funktion ausfallen; im Menü steht, welche.
   Getestet mit Minecraft 1.26.65.1.
+
+SYMBOLE
+  Menüsymbole von game-icons.net (CC BY 3.0), Urheber in Lizenzen/game-icons.txt.
+
+ENGLISH
+  Start it through the Mett Launcher. Right Shift opens the menu. The language follows the game:
+  German if Minecraft is set to German, otherwise English.

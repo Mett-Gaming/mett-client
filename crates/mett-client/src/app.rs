@@ -16,6 +16,7 @@ use crate::window;
 use crate::zoom_link::ZoomLink;
 use hud::chat_input::{ChatInput, Key};
 use hud::hints::Hints;
+use hud::lang::t;
 use hud::ui::Input;
 use hud::{Draw, Keys, Kind, java_chat};
 use hudlink::{Event, control};
@@ -53,12 +54,10 @@ pub struct App {
     status: String,
     game: HWND,
     editor: Option<Editor>,
-    opened: Instant,
     mouse: Input,
     keys: Keys,
     left: CpsCounter,
     right: CpsCounter,
-    left_shift: bool,
     right_shift: bool,
     /// Wo auf dem nativen Knopf gedrückt wurde.
     armed: Option<POINT>,
@@ -116,12 +115,10 @@ impl App {
             status: String::new(),
             game: HWND::default(),
             editor: None,
-            opened: Instant::now(),
             mouse: Input::default(),
             keys: Keys::default(),
             left: CpsCounter::default(),
             right: CpsCounter::default(),
-            left_shift: false,
             right_shift: false,
             armed: None,
             open_after_menu: None,
@@ -196,7 +193,9 @@ impl App {
         let now = Instant::now();
         if let Some(l) = &mut self.link {
             l.want(pid.map(|p| (p, playing)));
-            self.notes.extend(l.notes().into_iter().map(|t| sources::Line { text: format!("§c{t}"), at: Some(now) }));
+            self.notes.extend(
+                l.notes().into_iter().map(|t| sources::Line { text: format!("§c{}", hud::lang::t(t)), at: Some(now) }),
+            );
         }
         let extra = self.notes.len().saturating_sub(10);
         self.notes.drain(..extra);
@@ -351,6 +350,7 @@ impl App {
             // Die Tastenbelegung kann sich im Spiel ändern.
             if self.keys_read.elapsed() > Duration::from_secs(2) {
                 self.keys_read = Instant::now();
+                crate::set_language();
                 let (chat, command) = chat_keys::read();
                 s.set_keys(&chat, &command);
             }
@@ -360,7 +360,7 @@ impl App {
     /// Text am Tray-Symbol.
     pub fn status(&self) -> String {
         let note = self.screen.as_ref().map_or("nur Entwicklung, keine Anzeige", |s| s.note());
-        format!("Mett-Client: {note}")
+        format!("Mett-Client: {}", t(note))
     }
 
     pub fn status_changed(&mut self) -> bool {
@@ -579,7 +579,6 @@ impl App {
         self.shown = true;
         self.keys = Keys::default();
         self.mouse = Input::default();
-        self.opened = Instant::now();
         self.sync();
         self.paint();
     }
@@ -614,6 +613,7 @@ impl App {
         let c = &mut self.config;
         match vk {
             VK_ESCAPE if e.is_typing() => e.end_typing(c),
+            VK_ESCAPE if e.close_picker() => {}
             VK_ESCAPE => self.close_editor(),
             VK_BACK => e.char(c, '\u{8}'),
             VK_RETURN => e.char(c, '\r'),
@@ -632,20 +632,19 @@ impl App {
         }
     }
 
-    /// Rechte Umschalttaste: öffnen, doppelt aufklappen, sonst schließen.
+    /// Rechte Umschalttaste: Menü öffnen und schließen; beim Anordnen des HUDs zurück ins Menü.
     fn hotkey(&mut self) {
         let front = self.in_front();
-        let quick = self.opened.elapsed() < Duration::from_millis(400);
         match &mut self.editor {
             Some(e) if e.is_typing() => {}
-            Some(e) if e.view == View::Compact && quick => {
+            Some(e) if e.view == View::Compact => {
                 e.view = View::Full;
                 self.paint();
             }
             Some(_) => self.close_editor(),
             // Nur beim Spielen, damit Tippen im Chat nichts öffnet.
             None if self.shown && front && !cursor_visible() => {
-                self.open_editor(if self.left_shift { View::Full } else { View::Compact });
+                self.open_editor(View::Full);
             }
             None => {}
         }
@@ -670,7 +669,7 @@ impl App {
         }
         let p = self.config.profile();
         for (kind, at) in editor::items(p, screen, dpi, native) {
-            let style = &p.modules[&kind].style;
+            let style = &p.style(kind);
             let text = match kind {
                 Kind::Keystrokes => {
                     hud::keystrokes(at, style, self.keys, &mut out);
@@ -706,12 +705,12 @@ impl App {
                     let gpu = v.gpu.map_or(String::new(), |g| format!("   GPU {g} %"));
                     format!("CPU {} %   RAM {} %{gpu}", v.cpu, v.ram)
                 }),
-                Kind::Battery => show(&data.battery, "Akku …", |b| format!("Akku {b} %")),
+                Kind::Battery => show(&data.battery, "Akku …", |b| format!("{} {b} %", t("Akku"))),
                 Kind::Music => show(&data.music, "Musik …", |m| m.clone()),
                 Kind::Ping => show(&data.ping, "Ping …", |ms| format!("{ms} ms")),
                 Kind::Session => sources::clock_text(self.started.map_or(Duration::ZERO, |s| s.elapsed())),
                 Kind::Stopwatch => sources::clock_text(self.stopwatch.value(now)),
-                Kind::Note if p.note.is_empty() => "Notiz".into(),
+                Kind::Note if p.note.is_empty() => t("Notiz").into(),
                 Kind::Note => p.note.clone(),
                 // Ohne Platz auf dem Bildschirm.
                 Kind::Zoom | Kind::Players | Kind::AppleSkin => continue,
@@ -888,7 +887,6 @@ impl App {
         }
         let down = k.Flags as u32 & RI_KEY_BREAK == 0;
         if k.MakeCode != 0x36 {
-            self.left_shift = down;
             return;
         }
         // Tastenwiederholung zählt nicht.
@@ -924,8 +922,8 @@ fn note_rows(
 fn show<T>(r: &Reading<T>, pending: &str, f: impl FnOnce(&T) -> String) -> String {
     match r {
         Reading::Ready(v) => f(v),
-        Reading::Pending => pending.into(),
-        Reading::Off(why) => (*why).into(),
+        Reading::Pending => t(pending).into(),
+        Reading::Off(why) => t(why).into(),
     }
 }
 
