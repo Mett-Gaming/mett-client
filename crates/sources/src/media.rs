@@ -21,16 +21,19 @@ pub fn current() -> Result<Option<String>> {
     Ok(text(&p.Artist()?.to_string_lossy(), &p.Title()?.to_string_lossy()))
 }
 
+/// Gekürzt wird erst beim Zeichnen; das hier fängt nur Unsinn ab.
+const MOST: usize = 200;
+
 fn text(artist: &str, title: &str) -> Option<String> {
     let full = match (artist.trim(), title.trim()) {
         (_, "") => return None,
         ("", t) => t.to_string(),
         (a, t) => format!("{a} – {t}"),
     };
-    if full.chars().count() <= 32 {
+    if full.chars().count() <= MOST {
         return Some(full);
     }
-    Some(full.chars().take(31).chain(['…']).collect())
+    Some(full.chars().take(MOST - 1).chain(['…']).collect())
 }
 
 #[cfg(test)]
@@ -38,10 +41,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn titel_wird_gekuerzt() {
+    fn nur_unsinn_wird_gekuerzt() {
         assert_eq!(text("A", "B").as_deref(), Some("A – B"));
         assert_eq!(text("", "B").as_deref(), Some("B"));
         assert_eq!(text("A", " "), None);
-        assert_eq!(text("", &"ä".repeat(50)).unwrap().chars().count(), 32);
+        assert_eq!(text("", &"ä".repeat(500)).unwrap().chars().count(), MOST);
+        assert_eq!(text("A", &"b".repeat(60)).unwrap().chars().count(), 64);
     }
 }

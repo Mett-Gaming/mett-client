@@ -36,6 +36,7 @@ pub fn encode(items: &[Draw]) -> Vec<u8> {
                     Align::Left => 0,
                     Align::Center => 1,
                     Align::Right => 2,
+                    Align::Fit => 3,
                 });
                 t(&mut o, text);
             }
@@ -118,6 +119,7 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<Draw>> {
                     0 => Align::Left,
                     1 => Align::Center,
                     2 => Align::Right,
+                    3 => Align::Fit,
                     _ => return None,
                 },
                 text: r.text()?,

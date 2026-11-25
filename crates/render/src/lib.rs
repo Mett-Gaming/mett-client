@@ -274,10 +274,14 @@ impl Painter {
             )?;
             f.SetTextAlignment(match align {
                 Align::Left => DWRITE_TEXT_ALIGNMENT_LEADING,
-                Align::Center => DWRITE_TEXT_ALIGNMENT_CENTER,
+                Align::Center | Align::Fit => DWRITE_TEXT_ALIGNMENT_CENTER,
                 Align::Right => DWRITE_TEXT_ALIGNMENT_TRAILING,
             })?;
             f.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+            if align == Align::Fit {
+                let t = DWRITE_TRIMMING { granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER, ..Default::default() };
+                f.SetTrimming(&t, &self.dwrite.CreateEllipsisTrimmingSign(&f)?)?;
+            }
             formats.insert(key, f.clone());
             Ok(f)
         }
@@ -579,5 +583,23 @@ mod tests {
         assert_eq!(missing_advance('😀'), 9.0);
         assert_eq!(missing_advance('\u{FE0F}'), 0.0);
         assert!(private('\u{E000}') && private('\u{F8FF}') && !private('é') && !private('語'));
+    }
+
+    #[test]
+    fn langer_text_bleibt_im_feld() {
+        let rect = Rect { x: 8.0, y: 24.0, w: 48.0, h: 16.0 };
+        let text = "Interpret mit langem Namen – Titel, der nie hineinpasst".to_string();
+        let items = [Draw::Text { rect, size: 11.0, color: [1.0; 4], align: Align::Fit, text }];
+        let all: Vec<(u32, u32)> = (0..64).flat_map(|y| (0..64).map(move |x| (x, y))).collect();
+        let lit: Vec<(u32, u32)> = all
+            .iter()
+            .zip(paint(Symbols::default(), &items, &all))
+            .filter(|(_, p)| p[0] > 60)
+            .map(|(at, _)| *at)
+            .collect();
+        assert!(lit.len() > 40);
+        for (x, y) in lit {
+            assert!((7..=57).contains(&x) && (23..=41).contains(&y), "{x} {y}");
+        }
     }
 }

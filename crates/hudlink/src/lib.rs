@@ -8,7 +8,7 @@ use windows::Win32::System::Threading::*;
 use windows::core::{Error, HSTRING, Result};
 
 const MAGIC: u32 = 0x4D48_5544;
-const API: u32 = 9;
+const API: u32 = 10;
 /// So lange darf der Client schweigen.
 pub const TIMEOUT_MS: u64 = 2000;
 const EVENTS: usize = 1024;

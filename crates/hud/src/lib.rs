@@ -158,6 +158,8 @@ pub enum Align {
     Left,
     Center,
     Right,
+    /// Mittig; was nicht ins Feld passt, endet mit „…“.
+    Fit,
 }
 
 /// Symboltafeln für `Draw::Icon`.
@@ -330,11 +332,12 @@ impl Style {
         if self.outline {
             out.push(Draw::Outline { rect, radius, width: s, color: rgb(self.accent, 1.0) });
         }
+        let pad = (6.0 * s).min(rect.w / 4.0);
         out.push(Draw::Text {
-            rect,
+            rect: Rect { x: rect.x + pad, w: rect.w - 2.0 * pad, ..rect },
             size: 14.0 * s,
             color: rgb(self.text, 1.0),
-            align: Align::Center,
+            align: Align::Fit,
             text: text.into(),
         });
     }
