@@ -25,7 +25,6 @@ pub enum Action {
 pub enum Field {
     Search,
     Name,
-    Host,
     Note,
 }
 
@@ -159,7 +158,6 @@ impl Editor {
         let text = match field {
             Field::Search => &mut self.search,
             Field::Name => &mut c.profile_mut().name,
-            Field::Host => &mut c.profile_mut().ping_host,
             Field::Note => &mut c.profile_mut().note,
         };
         match ch {

@@ -404,7 +404,10 @@ impl Editor {
         ui.toggle(line(b, 8, s), "Umriss", &mut m.style.outline);
         let style = m.style;
         match k {
-            Kind::Ping => self.text_field(ui, c, line(b, 9, s), "Server", Field::Host),
+            Kind::Ping => {
+                let t = "Misst zu dem Server, mit dem du gerade verbunden bist. Liest dafür den Spielspeicher.";
+                ui.text(line(b, 9, s), 12.0, theme::MUTED, Align::Left, t);
+            }
             Kind::Note => self.text_field(ui, c, line(b, 9, s), "Text", Field::Note),
             _ => {}
         }
@@ -417,10 +420,7 @@ impl Editor {
     fn text_field(&mut self, ui: &mut Ui, c: &mut Config, r: Rect, label: &str, field: Field) {
         ui.text(r, 13.0, theme::TEXT, Align::Left, label);
         let on = self.typing == Some(field);
-        let mut text = match field {
-            Field::Host => c.profile().ping_host.clone(),
-            _ => c.profile().note.clone(),
-        };
+        let mut text = c.profile().note.clone();
         if on {
             text.push('|');
         } else if text.is_empty() {

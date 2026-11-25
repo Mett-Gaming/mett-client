@@ -176,7 +176,11 @@ pub enum Kind {
 }
 
 /// Übliche Größe eines Textfelds; alle sind gleich hoch.
-const LABEL: (f32, f32) = (130.0, 30.0);
+const LABEL: (f32, f32) = (130.0, 60.0);
+/// Bei dieser Höhe hat die Schrift ihre übliche Größe; höhere Felder lassen mehr Luft.
+const TEXT_HEIGHT: f32 = 24.0;
+/// Schrift gegenüber früher.
+const TEXT_SCALE: f32 = 1.25;
 
 impl Kind {
     pub const ALL: [Kind; 15] = [
@@ -237,7 +241,7 @@ impl Kind {
             Kind::Keystrokes => (124.0, 162.0),
             Kind::Chat => (java_chat::FULL_WIDTH, java_chat::LINE * java_chat::ROWS as f32),
             // Längere Texte brauchen mehr Platz.
-            Kind::System | Kind::Music | Kind::Note => (230.0, LABEL.1),
+            Kind::System | Kind::Music | Kind::Note => (290.0, LABEL.1),
             _ => LABEL,
         }
     }
@@ -318,7 +322,7 @@ pub fn keystrokes(at: Rect, style: &Style, keys: Keys, out: &mut Vec<Draw>) {
 /// Die Schrift richtet sich nach der knapperen Seite.
 pub fn label(at: Rect, kind: Kind, style: &Style, text: &str, out: &mut Vec<Draw>) {
     let size = kind.size();
-    style.field(at, (at.w / size.0).min(at.h / size.1), text, false, out);
+    style.field(at, (at.w / size.0 * TEXT_SCALE).min(at.h / TEXT_HEIGHT), text, false, out);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -367,7 +371,7 @@ mod tests {
     fn textfelder_sind_gleich_gross() {
         for k in Kind::ALL.into_iter().filter(|k| k.label()) {
             let (w, h) = k.size();
-            assert!(h == LABEL.1 && (w == LABEL.0 || (w > LABEL.0 && w < 2.0 * LABEL.0)), "{k:?}");
+            assert!(h == LABEL.1 && (w == LABEL.0 || (w > LABEL.0 && w < 2.5 * LABEL.0)), "{k:?}");
         }
         assert!(!Kind::Keystrokes.label() && !Kind::Chat.label() && !Kind::Zoom.label());
     }

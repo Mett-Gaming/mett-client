@@ -12,6 +12,7 @@ pub mod commands;
 pub mod model;
 pub mod options;
 pub mod players;
+pub mod server;
 pub mod sheets;
 pub mod uisizes;
 pub mod uitree;

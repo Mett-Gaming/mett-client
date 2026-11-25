@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Module {
@@ -29,7 +29,7 @@ impl Module {
             // Wie in der Java Edition: ganz links, 40 Pixel über dem unteren Rand.
             Kind::Chat => (Anchor::BottomLeft, 0.0, -hud::java_chat::BOTTOM),
             // Übrige Module untereinander, damit sie sich beim Einschalten nicht verdecken.
-            k => (Anchor::TopLeft, 16.0, 16.0 + 34.0 * (k as u8 - 1) as f32),
+            k => (Anchor::TopLeft, 16.0, 16.0 + 64.0 * (k as u8 - 1) as f32),
         };
         // Nur das Wichtigste ist von Anfang an sichtbar.
         let enabled = matches!(kind, Kind::Keystrokes | Kind::Cps | Kind::Clock);
@@ -43,8 +43,6 @@ pub struct Profile {
     pub name: String,
     pub modules: BTreeMap<Kind, Module>,
     pub crosshair_enabled: bool,
-    /// Server für den Ping.
-    pub ping_host: String,
     pub note: String,
     pub crosshair: Crosshair,
 }
@@ -55,7 +53,6 @@ impl Default for Profile {
             name: "Standard".into(),
             modules: Kind::ALL.map(|k| (k, Module::standard(k))).into(),
             crosshair_enabled: false,
-            ping_host: String::new(),
             note: String::new(),
             crosshair: Crosshair { length: 6.0, gap: 3.0, thickness: 2.0, dot: false, color: 0xE8E0D1, alpha: 0.9 },
         }
@@ -212,6 +209,23 @@ pub fn load(path: &Path) -> io::Result<Config> {
             (m.place.scale, m.place.w, m.place.h) = (1.0, 1.0, 1.0);
         }
     }
+    if version < 5 {
+        // Seit Version 5 sind Textfelder anfangs doppelt so hoch. Selbst gewählte Größen und Plätze bleiben.
+        for (k, m) in c.profiles.iter_mut().flat_map(|p| &mut p.modules).filter(|(k, _)| k.label()) {
+            let p = &mut m.place;
+            if version == 4 && (p.scale, p.w, p.h) != (1.0, 1.0, 1.0) {
+                p.h *= 0.5;
+                // Lange Felder waren 230 statt 290 breit.
+                if matches!(k, Kind::System | Kind::Music | Kind::Note) && p.w != 1.0 {
+                    p.w *= 230.0 / 290.0;
+                }
+            }
+            let standard = Module::standard(*k).place;
+            if (p.anchor, p.x, p.y) == (standard.anchor, 16.0, 16.0 + 34.0 * (*k as u8 - 1) as f32) {
+                p.y = standard.y;
+            }
+        }
+    }
     if c.tab_list {
         // Aus dem Schalter wurde ein Modul.
         c.tab_list = false;
@@ -340,8 +354,35 @@ mod tests {
         assert_eq!((a.x, a.y, a.scale, a.w, a.h), (7.0, 9.0, 1.0, 1.0, 1.0));
         // Der Chat behält seine Größe, und später gewählte Größen bleiben.
         assert_eq!(place(&c, Kind::Chat).h, 0.9);
-        fs::write(&p, text(4)).unwrap();
+        fs::write(&p, text(5)).unwrap();
         assert_eq!(place(&load(&p).unwrap(), Kind::Ping).h, 1.5);
+    }
+
+    #[test]
+    fn doppelte_hoehe_laesst_eigenes_in_ruhe() {
+        let p = file("hoch");
+        let m = |y: f32, h: f32| {
+            format!(
+                r#"{{"enabled":true,"place":{{"anchor":"top-left","x":16.0,"y":{y},"scale":1.0,"w":1.0,"h":{h}}}}}"#
+            )
+        };
+        let (cps, clock) = (m(16.0, 1.0), m(50.0, 1.0));
+        let (fps, note) = (m(300.0, 1.5), m(301.0, 1.0));
+        let t = format!(
+            r#"{{"version":4,"profiles":[{{"modules":{{"cps":{cps},"clock":{clock},"fps":{fps},"note":{note}}}}}]}}"#
+        );
+        fs::write(&p, t).unwrap();
+        let c = load(&p).unwrap();
+        let place = |k| c.profile().modules[&k].place;
+        // Unverändertes rückt auf den neuen Platz, sonst lägen die höheren Felder übereinander.
+        assert_eq!(place(Kind::Cps), Module::standard(Kind::Cps).place);
+        assert_eq!(place(Kind::Clock), Module::standard(Kind::Clock).place);
+        // 45 Punkte hoch bleiben 45 Punkte; ein eigener Platz bleibt.
+        assert_eq!((place(Kind::Fps).y, place(Kind::Fps).h * Kind::Fps.size().1), (300.0, 45.0));
+        assert_eq!((place(Kind::Note).y, place(Kind::Note).h), (301.0, 1.0));
+        // Nur einmal.
+        save(&p, &c).unwrap();
+        assert_eq!(load(&p).unwrap(), c);
     }
 
     #[test]

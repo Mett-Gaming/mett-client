@@ -7,6 +7,7 @@ use crate::editor::{self, Action, Editor, View};
 use crate::game::{self, Status, Watcher};
 use crate::marker;
 use crate::panel_link::{Goal, PanelLink, State as PanelState, Want};
+use crate::ping_link::PingLink;
 use crate::players_link::{self, PlayersLink};
 use crate::plugins::Plugins;
 use crate::screen::Screen;
@@ -74,6 +75,7 @@ pub struct App {
     players: Option<PlayersLink>,
     zoom: Option<ZoomLink>,
     apple: Option<AppleLink>,
+    ping: Option<PingLink>,
     cross: Option<CrossLink>,
     /// Tab wird beim Spielen gehalten.
     tab: bool,
@@ -133,6 +135,7 @@ impl App {
             players: plugins.is_some().then(PlayersLink::start),
             zoom: plugins.clone().map(ZoomLink::start),
             apple: plugins.is_some().then(AppleLink::start),
+            ping: plugins.is_some().then(PingLink::start),
             cross: plugins.clone().map(CrossLink::start),
             tab: false,
             link: plugins.map(ChatLink::start),
@@ -217,6 +220,10 @@ impl App {
             s.want(java);
         }
         let style = self.style.as_ref().map_or("nur beim Start über den Mett Launcher", StyleLink::state);
+        let ping = self.watcher.pid().filter(|_| self.module(Kind::Ping)).map(|pid| (pid, playing));
+        if let Some(p) = &mut self.ping {
+            p.want(ping);
+        }
         let apple = self.watcher.pid().filter(|_| self.module(Kind::AppleSkin)).map(|pid| (pid, playing));
         if let Some(a) = &mut self.apple {
             a.want(apple);
@@ -496,12 +503,13 @@ impl App {
             self.fps = Some(f);
         }
         let p = self.config.profile();
+        let server = self.ping.as_ref().and_then(PingLink::server);
         let on = |k: Kind| self.shown && p.modules.get(&k).is_some_and(|m| m.enabled);
         self.hub.want(&Wanted {
             system: on(Kind::System),
             battery: on(Kind::Battery),
             music: on(Kind::Music),
-            ping: on(Kind::Ping).then(|| p.ping_host.clone()),
+            ping: on(Kind::Ping).then(|| server.map_or(String::new(), |ip| ip.to_string())),
             // Minecraft zeigt die Nachrichten selbst; wir lesen sie nicht mehr.
             chat_pid: None,
             fps_pid: None,

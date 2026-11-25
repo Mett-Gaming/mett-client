@@ -15,6 +15,7 @@ mod marker;
 mod menu;
 mod pack;
 mod panel_link;
+mod ping_link;
 mod players_link;
 mod plugins;
 mod screen;
