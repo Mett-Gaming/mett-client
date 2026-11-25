@@ -24,6 +24,22 @@ pub struct Options {
     pub opacity: (u64, u64),
 }
 
+/// Woran die Suche scheitert, nur Anzahlen.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Trace {
+    /// Fundstellen der zwei Namen, Texte darauf, mögliche Einstellungen, gemeinsame Arten.
+    pub names: usize,
+    pub texts: usize,
+    pub options: usize,
+    pub kinds: usize,
+    /// Eindeutig belegte Arten, darunter die am besten passende: wie viele Einstellungen bekannt sind und wie viele
+    /// beim besten und zweitbesten Feld zur Datei passen.
+    pub single: usize,
+    pub known: usize,
+    pub best: usize,
+    pub second: usize,
+}
+
 type Read<'a> = &'a (dyn Fn(u64, &mut [u8]) -> bool + Sync);
 
 fn word(read: Read, at: u64) -> Option<u64> {
@@ -58,7 +74,7 @@ pub fn parse(file: &str) -> HashMap<String, f32> {
 }
 
 /// Welches Feld stimmt mit der Datei überein?
-fn value(found: &[(String, Vec<f32>)], file: &HashMap<String, f32>) -> Option<u64> {
+fn value(found: &[(String, Vec<f32>)], file: &HashMap<String, f32>, trace: &mut Trace) -> Option<u64> {
     let known: Vec<(&Vec<f32>, f32)> = found.iter().filter_map(|(n, f)| Some((f, *file.get(n)?))).collect();
     let mut hits: Vec<(usize, u64)> = FIELDS
         .step_by(4)
@@ -67,12 +83,22 @@ fn value(found: &[(String, Vec<f32>)], file: &HashMap<String, f32>) -> Option<u6
         .collect();
     hits.sort_unstable_by(|a, b| b.cmp(a));
     let (best, at) = *hits.first()?;
+    // Der Anteil zählt: Falsche Abstände liefern oft viele bekannte Namen mit fremden Werten.
+    let share = |known: usize, best: usize| (known >= ENOUGH, best * 1000 / known.max(1), known);
+    if share(known.len(), best) >= share(trace.known, trace.best) {
+        (trace.known, trace.best, trace.second) = (known.len(), best, hits.get(1).map_or(0, |s| s.0));
+    }
     // Der Standardwert stimmt auch oft; der Wert muss klar besser passen.
     let clear = hits.get(1).is_none_or(|s| s.0 + 2 <= best);
     (known.len() >= ENOUGH && best * 10 >= known.len() * 9 && clear).then_some(at)
 }
 
 pub fn find(r: &Reader, image: &Range<u64>, file: &HashMap<String, f32>) -> Option<Options> {
+    find_traced(r, image, file, &mut Trace::default())
+}
+
+pub fn find_traced(r: &Reader, image: &Range<u64>, file: &HashMap<String, f32>, trace: &mut Trace) -> Option<Options> {
+    *trace = Trace::default();
     let read: Read = &|at, out| r.read(at as usize, out).is_ok();
     // 1. Die Namen selbst.
     let names = [SPACING, OPACITY];
@@ -89,6 +115,7 @@ pub fn find(r: &Reader, image: &Range<u64>, file: &HashMap<String, f32>) -> Opti
         out
     });
     let spots: HashMap<u64, usize> = spots.into_iter().collect();
+    trace.names = spots.len();
     // 2. Texte, die darauf zeigen und so lang sind.
     let texts = r.scan(&|at, b| {
         let words = b.as_chunks::<8>().0;
@@ -99,6 +126,7 @@ pub fn find(r: &Reader, image: &Range<u64>, file: &HashMap<String, f32>) -> Opti
         };
         words.iter().enumerate().filter_map(hit).collect()
     });
+    trace.texts = texts.len();
     // 3. Einstellungen: Tabelle des Programms, dann ein Zeiger kurz vor den Text.
     let options = r.scan(&|at, b| {
         let mut out = vec![];
@@ -115,18 +143,21 @@ pub fn find(r: &Reader, image: &Range<u64>, file: &HashMap<String, f32>) -> Opti
         }
         out
     });
+    trace.options = options.len();
     // Beide Namen müssen dieselbe Art und denselben Abstand ergeben. Beschreibungen liegen hintereinander, deshalb passt
     // auch der Abstand zur nächsten; nur beim richtigen stimmen Namen und Werte mit der Datei überein.
     let kinds = |k: usize| options.iter().filter(|o| o.0 == k).map(|o| (o.1, o.2)).collect::<HashSet<_>>();
     let mut good = vec![];
     for (table, name) in kinds(0).intersection(&kinds(1)).copied() {
+        trace.kinds += 1;
         let one = |k: usize| {
             let mut it = options.iter().filter(|o| o.0 == k && (o.1, o.2) == (table, name));
             let first = it.next()?;
             it.next().is_none().then_some((first.3, first.4))
         };
         let (Some(spacing), Some(opacity)) = (one(0), one(1)) else { continue };
-        if let Some(value) = value(&all(r, read, table, name), file) {
+        trace.single += 1;
+        if let Some(value) = value(&all(r, read, table, name), file, trace) {
             good.push(Options { table, name, value, spacing, opacity });
         }
     }
@@ -197,10 +228,19 @@ mod tests {
         let row =
             |i: usize, standard: f32| (format!("o{i}"), vec![-9.0, 99.0, standard, i as f32, 0.001, 0.0, 0.0, 0.0]);
         let mixed: Vec<_> = (0..12).map(|i| row(i, if i < 4 { 7.5 } else { i as f32 })).collect();
+        let value = |f: &[_], file: &_| super::value(f, file, &mut Trace::default());
         assert_eq!(value(&mixed, &file), Some(0x1C));
         // Alles auf Standard: nicht zu unterscheiden.
         let same: Vec<_> = (0..12).map(|i| row(i, i as f32)).collect();
         assert_eq!(value(&same, &file), None);
+        // Die Spur zeigt, warum.
+        let mut trace = Trace::default();
+        super::value(&same, &file, &mut trace);
+        assert_eq!((trace.known, trace.best, trace.second), (12, 12, 12));
+        // Ein schlechter passender Kandidat verdrängt sie nicht, auch wenn er mehr Namen kennt.
+        let more: Vec<_> = (0..40).map(|i| row(i % 12, 500.0)).map(|(n, f)| (n, vec![500.0; f.len()])).collect();
+        super::value(&more, &file, &mut trace);
+        assert_eq!((trace.known, trace.best), (12, 12));
         // Zu wenige bekannte Namen, oder die Datei passt nicht.
         assert_eq!(value(&mixed[..6], &file), None);
         let other: HashMap<String, f32> = (0..12).map(|i| (format!("o{i}"), 500.0 + i as f32)).collect();

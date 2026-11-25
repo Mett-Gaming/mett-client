@@ -2,6 +2,16 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+/// Fehlernummer von Windows beim letzten misslungenen Laden, für die Diagnose.
+static LAST: Mutex<Option<(String, u32)>> = Mutex::new(None);
+
+pub fn report() -> String {
+    match &*LAST.lock().unwrap_or_else(|e| e.into_inner()) {
+        None => "keiner".into(),
+        Some((name, code)) => format!("{name} 0x{code:08X}"),
+    }
+}
+
 #[derive(Clone)]
 pub struct Plugins {
     dir: Option<PathBuf>,
@@ -27,7 +37,10 @@ impl Plugins {
         // Immer nur einer lädt.
         let mut loaded = self.loaded.lock().unwrap_or_else(|e| e.into_inner());
         *loaded = Some(pid);
-        mett_inject::start(pid, &core, &[name]).map_err(|_| "Plugin ließ sich nicht laden")?;
+        mett_inject::start(pid, &core, &[name]).map_err(|e| {
+            *LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some((name.into(), e.code().0 as u32));
+            "Plugin ließ sich nicht laden"
+        })?;
         match mett_inject::status(pid).ok().and_then(|s| s.into_iter().find(|p| p.0 == name)) {
             Some((_, mett_plugin::state::LOADED)) => Ok(()),
             Some((_, s)) => Err(mett_plugin::state::text(s)),

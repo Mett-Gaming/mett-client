@@ -806,8 +806,16 @@ impl Editor {
             }
             self.confirm_reset = !self.confirm_reset;
         }
+        if ui.button(report_rect(b, s), "Diagnose kopieren", false) {
+            return Action::CopyReport;
+        }
         Action::None
     }
+}
+
+/// Daneben.
+pub fn report_rect(b: Rect, s: f32) -> Rect {
+    cell(b, 8, 1, 2, s)
 }
 
 pub fn reset_rect(b: Rect, s: f32) -> Rect {

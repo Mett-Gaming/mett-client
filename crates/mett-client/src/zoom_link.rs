@@ -67,12 +67,14 @@ struct Worker {
     /// Zuletzt angenommen.
     sent: Want,
     tries: u32,
+    /// Woran es zuletzt lag.
+    why: &'static str,
     next: Instant,
 }
 
 impl Worker {
     fn new(state: Arc<Mutex<&'static str>>, plugins: Plugins) -> Self {
-        Self { state, plugins, want: None, found: None, sent: None, tries: 0, next: Instant::now() }
+        Self { state, plugins, want: None, found: None, sent: None, tries: 0, why: "", next: Instant::now() }
     }
 
     fn run(mut self, inbox: Receiver<Option<Want>>) {
@@ -120,15 +122,13 @@ impl Worker {
                 Err(why) => {
                     self.sent = None;
                     self.tries += 1;
-                    if self.tries >= PATIENT {
-                        return why;
-                    }
+                    self.why = why;
                 }
             }
         }
         match (self.sent, self.tries >= PATIENT) {
             (Some(_), _) => RUNNING,
-            (None, true) => "Sichtfeld nicht eindeutig gefunden",
+            (None, true) => self.why,
             (None, false) => "wird gesucht",
         }
     }

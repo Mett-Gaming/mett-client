@@ -31,6 +31,11 @@ fn files(users: &Path) -> Vec<PathBuf> {
     files.filter(|p| p.is_file()).collect()
 }
 
+/// Wie viele Konten eine Einstellungsdatei haben.
+pub fn accounts() -> usize {
+    users().map_or(0, |u| files(&u).len())
+}
+
 /// Die zuletzt benutzte.
 pub fn options_file() -> Option<PathBuf> {
     let found = files(&users()?).into_iter().filter_map(|p| Some((p.metadata().ok()?.modified().ok()?, p)));

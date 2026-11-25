@@ -4,9 +4,11 @@ use crate::chat_keys;
 use crate::chat_link::ChatLink;
 use crate::cross_link::CrossLink;
 use crate::editor::{self, Action, Editor, View};
+use crate::focus;
 use crate::game::{self, Status, Watcher};
 use crate::gear_link::{self, GearLink};
 use crate::marker;
+use crate::named;
 use crate::panel_link::{Goal, PanelLink, State as PanelState, Want};
 use crate::ping_link::PingLink;
 use crate::players_link::{self, PlayersLink};
@@ -872,12 +874,48 @@ impl App {
                     self.close_editor();
                     return window::open_folder(self.path.as_deref());
                 }
+                Action::CopyReport => {
+                    let done = window::set_clipboard(self.hwnd, &self.report()).is_ok();
+                    if let Some(e) = &mut self.editor {
+                        let text =
+                            if done { "Diagnose kopiert, ohne Namen und Pfade." } else { "Kopieren nicht möglich." };
+                        e.note = hud::lang::t(text).into();
+                    }
+                }
                 Action::None => {}
             }
         }
         if let Some(s) = &mut self.screen {
             s.show(&scene);
         }
+    }
+
+    /// Zum Weitergeben an uns: Versionen und Zustände, nichts über den Nutzer.
+    fn report(&self) -> String {
+        let Some(e) = &self.editor else { return String::new() };
+        let on = |k: Kind| if self.module(k) { "an" } else { "aus" };
+        let z = self.config.zoom;
+        let size = self.screen.as_ref().and_then(Screen::size);
+        [
+            format!("Mett-Client {}", env!("CARGO_PKG_VERSION")),
+            format!("Minecraft {}", game::version().unwrap_or("unbekannt".into())),
+            format!("Start über den Launcher: {}", if self.zoom.is_some() { "ja" } else { "nein" }),
+            format!("Minecraft erkannt: {}", if self.watcher.pid().is_some() { "ja" } else { "nein" }),
+            format!("Bild: {size:?}"),
+            format!("Konten: {}", focus::accounts()),
+            format!("Einstellungen: {}", named::report()),
+            format!("Letzter Ladefehler: {}", crate::plugins::report()),
+            format!("Zoom: {}, {} (Taste 0x{:02X}, umschalten {})", on(Kind::Zoom), e.zoom_state, z.key, z.toggle),
+            format!("Fullbright: {}, {}", on(Kind::Fullbright), e.bright_state),
+            format!("Chat: {}, Eingabe {}, Anzeige {}", on(Kind::Chat), e.chat_state, e.panel_state),
+            format!("Java-Aussehen: {}", e.style_state),
+            format!("Crosshair: {}, {}", on(Kind::Crosshair), e.cross_state),
+            format!("AppleSkin: {}, {}", on(Kind::AppleSkin), e.apple_state),
+            format!("Spielerliste: {}, {}", on(Kind::Players), e.tab_state),
+            format!("Armor HUD: {}, {}", on(Kind::Armor), e.gear_states[0]),
+            format!("Effekte: {}, {}", on(Kind::Potions), e.gear_states[1]),
+        ]
+        .join("\r\n")
     }
 
     pub fn input(&mut self, raw: &RAWINPUT) {

@@ -20,6 +20,7 @@ pub enum Action {
     None,
     Close,
     OpenFolder,
+    CopyReport,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -714,6 +715,18 @@ mod tests {
         click(&mut e, &mut c);
         assert!(c.chat_java);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn diagnose_kopieren_aendert_nichts() {
+        let mut e = Editor::new(View::Full, None);
+        e.page = Page::Options;
+        let mut c = Config::default();
+        let before = c.clone();
+        let r = crate::menu::report_rect(crate::menu::body_of(S, 1.0), 1.0);
+        let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        assert_eq!(step(&mut e, &mut c, at, true, true), Action::CopyReport);
+        assert_eq!(c, before);
     }
 
     #[test]

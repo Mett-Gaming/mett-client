@@ -63,12 +63,23 @@ struct Worker {
     /// Was im Spiel gerade gilt.
     sent: [Option<f32>; COUNT],
     tries: [u32; COUNT],
+    /// Woran es zuletzt lag.
+    why: [&'static str; COUNT],
     next: Instant,
 }
 
 impl Worker {
     fn new(state: Arc<Mutex<[&'static str; COUNT]>>, plugins: Plugins) -> Self {
-        Self { state, plugins, want: None, ready: None, sent: [None; COUNT], tries: [0; COUNT], next: Instant::now() }
+        Self {
+            state,
+            plugins,
+            want: None,
+            ready: None,
+            sent: [None; COUNT],
+            tries: [0; COUNT],
+            why: [""; COUNT],
+            next: Instant::now(),
+        }
     }
 
     fn run(mut self, inbox: Receiver<Option<Option<Want>>>) {
@@ -122,8 +133,9 @@ impl Worker {
             }
             match self.turn(pid, which, target) {
                 Ok(()) => (self.sent[which], self.tries[which]) = (target, 0),
-                Err(_) => {
+                Err(why) => {
                     failed = true;
+                    self.why[which] = why;
                     self.tries[which] += 1;
                     self.sent[which] = None;
                 }
@@ -135,7 +147,7 @@ impl Worker {
         std::array::from_fn(|i| match (wish[i], self.sent[i], self.tries[i] >= PATIENT) {
             (None, ..) => "aus",
             (Some(_), Some(_), _) => RUNNING,
-            (Some(_), None, true) => "Einstellungen nicht eindeutig gefunden",
+            (Some(_), None, true) => self.why[i],
             (Some(_), None, false) => "wird gesucht",
         })
     }
@@ -152,6 +164,7 @@ impl Worker {
             // Erst merken: Minecraft speichert seine Einstellungen auch zwischendurch.
             focus::remember_value(ALLOWED[which].0, t).map_err(|_| "Merkzettel ließ sich nicht schreiben")?;
         }
+        named::place(pid, ALLOWED[which].0)?;
         self.plugins.load(pid, PLUGIN)?;
         match self.order(pid, which, target) {
             Some(answer::OK) => Ok(()),

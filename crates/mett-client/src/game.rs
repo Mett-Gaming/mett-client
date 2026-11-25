@@ -22,6 +22,22 @@ pub fn is_installed() -> bool {
     }
 }
 
+/// Aus dem Namen des Pakets, etwa `1.26.6501.0`.
+pub fn version() -> Option<String> {
+    let (mut count, mut len) = (0, 0);
+    unsafe {
+        let _ = GetPackagesByPackageFamily(FAMILY, &mut count, None, &mut len, None);
+        let mut names = vec![PWSTR::null(); count as usize];
+        let mut text = vec![0u16; len as usize];
+        let (n, t) = (names.as_mut_ptr(), PWSTR(text.as_mut_ptr()));
+        let r = GetPackagesByPackageFamily(FAMILY, &mut count, Some(n), &mut len, Some(t));
+        if r != ERROR_SUCCESS || count == 0 {
+            return None;
+        }
+        Some(names[0].to_string().ok()?.split('_').nth(1)?.to_string())
+    }
+}
+
 /// Startet über die App-Kennung. Minecraft wird so nicht unser Kindprozess.
 pub fn launch() -> Result<()> {
     unsafe {

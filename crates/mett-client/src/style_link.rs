@@ -66,12 +66,14 @@ struct Worker {
     /// Spiel, in dem der Stil gerade gilt.
     on: Option<u32>,
     tries: u32,
+    /// Woran es zuletzt lag.
+    why: &'static str,
     next: Instant,
 }
 
 impl Worker {
     fn new(state: Arc<Mutex<&'static str>>, plugins: Plugins) -> Self {
-        Self { state, plugins, want: None, found: None, on: None, tries: 0, next: Instant::now() }
+        Self { state, plugins, want: None, found: None, on: None, tries: 0, why: "", next: Instant::now() }
     }
 
     fn run(mut self, inbox: Receiver<Option<Option<u32>>>) {
@@ -102,15 +104,13 @@ impl Worker {
                 Ok(()) => self.on = Some(pid),
                 Err(why) => {
                     self.tries += 1;
-                    if self.tries >= PATIENT {
-                        return why;
-                    }
+                    self.why = why;
                 }
             }
         }
         match (self.on, self.tries >= PATIENT) {
             (Some(_), _) => RUNNING,
-            (None, true) => "Chat-Einstellungen nicht eindeutig gefunden",
+            (None, true) => self.why,
             (None, false) => "wird gesucht",
         }
     }
