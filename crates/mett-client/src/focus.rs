@@ -91,15 +91,49 @@ pub fn remember_zoom() -> io::Result<()> {
     Ok(())
 }
 
+/// Zweite Zeile im Zettel: Der Wert kommt aus dem laufenden Spiel und ist der des Nutzers.
+const SURE: &str = "sicher";
+
+/// Sichtfeld des Nutzers aus dem laufenden Spiel. Bei mehreren Konten ist unklar, wem es gehört.
+pub fn track_zoom(user: f32) {
+    if let [only] = &users().map(|u| files(&u)).unwrap_or_default()[..] {
+        let _ = track_zoom_in(only, user);
+    }
+}
+
+fn track_zoom_in(path: &Path, user: f32) -> io::Result<()> {
+    fs::write(path.with_file_name(ZOOM_NOTE), format!("{FOV}:{user}\n{SURE}"))
+}
+
+/// Ab hier ändert der Nutzer sein Sichtfeld, ohne dass wir zusehen.
+pub fn untrack_zoom() {
+    for p in users().map(|u| files(&u)).unwrap_or_default() {
+        let _ = untrack_zoom_in(&p);
+    }
+}
+
+fn untrack_zoom_in(path: &Path) -> io::Result<()> {
+    let note = path.with_file_name(ZOOM_NOTE);
+    match fs::read_to_string(&note) {
+        Ok(t) if t.lines().nth(1) == Some(SURE) => fs::write(note, t.lines().next().unwrap_or_default()),
+        _ => Ok(()),
+    }
+}
+
 fn fov(l: &str) -> Option<f32> {
     l.split_once(':')?.1.parse().ok()
 }
 
 fn remember_zoom_in(path: &Path) -> io::Result<()> {
     let Some(now) = line(&fs::read_to_string(path)?, FOV) else { return Ok(()) };
+    let note = path.with_file_name(ZOOM_NOTE);
+    // Ein sicherer Wert ist besser als die Datei, die mitten im Zoom gespeichert sein kann.
+    if fs::read_to_string(&note).is_ok_and(|t| t.lines().nth(1) == Some(SURE)) {
+        return Ok(());
+    }
     // Ein schon verkleinerter Wert ist nicht der des Nutzers.
     if fov(&now).is_some_and(|v| v >= LEAST_FOV) {
-        fs::write(path.with_file_name(ZOOM_NOTE), now)?;
+        fs::write(note, now)?;
     }
     Ok(())
 }
@@ -109,10 +143,14 @@ fn restore_zoom(path: &Path) -> io::Result<()> {
     if !note.is_file() {
         return Ok(());
     }
-    let (user, text) = (fs::read_to_string(&note)?, fs::read_to_string(path)?);
+    let (old, text) = (fs::read_to_string(&note)?, fs::read_to_string(path)?);
+    let mut lines = old.lines();
+    let user = lines.next().unwrap_or_default().to_string();
+    let sure = lines.next() == Some(SURE);
     if let Some(now) = line(&text, FOV)
-        && fov(&now).is_some_and(|v| v < LEAST_FOV)
-        && fov(&user).is_some_and(|v| v >= LEAST_FOV)
+        && let (Some(v), Some(u)) = (fov(&now), fov(&user))
+        && u >= LEAST_FOV
+        && (v < LEAST_FOV || sure && v < u - 0.0005)
     {
         let ends = text
             .split_inclusive('\n')
@@ -216,9 +254,36 @@ fn restore_value(path: &Path, name: &str) -> io::Result<()> {
     fs::remove_file(note)
 }
 
+/// Stellten frühere Fassungen um; ihr Zettel soll nicht liegen bleiben.
+const FORMER: [&str; 1] = ["gfx_hotbarScale"];
+
+/// Größe von Touch-Knöpfen, für die Dauer des Spiels um ein Hundertstel verstellt. Stehen bei einem Nutzer alle Zahlen auf
+/// Standard, ließe sich sonst nicht erkennen, welches Feld einer Einstellung der Wert ist und welches der Standard.
+const MARKS: [&str; 4] = ["gfx_moveStickScale", "gfx_altStickScale", "gfx_touchDpadScale", "gfx_touchButton6Scale"];
+
+fn mark_file(path: &Path, name: &str) -> io::Result<()> {
+    let text = fs::read_to_string(path)?;
+    let Some(now) = line(&text, name) else { return Ok(()) };
+    let Some(user) = fov(&now).filter(|v| (0.3..=2.0).contains(v)) else { return Ok(()) };
+    // Innerhalb der Grenzen bleiben.
+    let ours = ((user + if user > 1.5 { -0.01 } else { 0.01 }) * 1000.0).round() / 1000.0;
+    // Erst merken, dann ändern.
+    remember_value_in(path, name, ours)?;
+    let new = text.split_inclusive('\n').map(|l| match l.trim_end() == now {
+        true => l.replace(&now, &format!("{name}:{ours}")),
+        false => l.to_string(),
+    });
+    write(path, &new.collect::<String>())
+}
+
 /// Vor dem Spielstart. Fehlt ein Eintrag, wird er nicht angefasst.
 pub fn force() {
     each(force_file);
+    for p in users().map(|u| files(&u)).unwrap_or_default() {
+        for name in MARKS {
+            let _ = mark_file(&p, name);
+        }
+    }
 }
 
 /// Nach dem Spiel, nur was wir selbst geändert haben.
@@ -227,7 +292,7 @@ pub fn restore() {
     for p in users().map(|u| files(&u)).unwrap_or_default() {
         let _ = restore_style(&p);
         let _ = restore_zoom(&p);
-        for (name, ..) in ALLOWED {
+        for name in ALLOWED.map(|a| a.0).into_iter().chain(FORMER).chain(MARKS) {
             let _ = restore_value(&p, name);
         }
     }
@@ -347,6 +412,51 @@ mod tests {
         fs::write(&p, user.replace("110", "80")).unwrap();
         restore_zoom(&p).unwrap();
         assert_eq!(read(&p), user.replace("110", "80"));
+        assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn mitten_im_zoom_gespeichertes_sichtfeld_kommt_zurueck() {
+        let user = "a:1\r\ngfx_field_of_view:110\r\n";
+        let p = account("zoom-sicher", user);
+        let saved = user.replace("110", "46.1845");
+        remember_zoom_in(&p).unwrap();
+        track_zoom_in(&p, 110.0).unwrap();
+        fs::write(&p, &saved).unwrap();
+        // Noch einmal eingeschaltet: Die Datei überstimmt den sicheren Wert nicht.
+        remember_zoom_in(&p).unwrap();
+        restore_zoom(&p).unwrap();
+        assert_eq!(read(&p), user);
+        // Der Nutzer hat selbst umgestellt, wir haben es gesehen.
+        track_zoom_in(&p, 46.1845).unwrap();
+        fs::write(&p, &saved).unwrap();
+        restore_zoom(&p).unwrap();
+        assert_eq!(read(&p), saved);
+        // Oder ohne uns: Dann zählt seine Wahl.
+        track_zoom_in(&p, 110.0).unwrap();
+        untrack_zoom_in(&p).unwrap();
+        restore_zoom(&p).unwrap();
+        assert_eq!(read(&p), saved);
+        assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn markierungen_gehen_restlos_zurueck() {
+        let user = "gfx_moveStickScale:1\r\ngfx_altStickScale:2\r\ngfx_touchDpadScale:1.2\r\nb:1\r\n";
+        let p = account("marken", user);
+        let mark = || MARKS.iter().for_each(|n| mark_file(&p, n).unwrap());
+        let restore = || MARKS.iter().for_each(|n| restore_value(&p, n).unwrap());
+        mark();
+        // Den fehlenden Eintrag legen wir nicht an.
+        assert_eq!(read(&p), "gfx_moveStickScale:1.01\r\ngfx_altStickScale:1.99\r\ngfx_touchDpadScale:1.21\r\nb:1\r\n");
+        restore();
+        assert_eq!(read(&p), user);
+        // Hat der Nutzer selbst umgestellt, bleibt das.
+        mark();
+        let chosen = read(&p).replace("1.21", "0.8");
+        fs::write(&p, chosen).unwrap();
+        restore();
+        assert_eq!(read(&p), user.replace("1.2", "0.8"));
         assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1);
     }
 

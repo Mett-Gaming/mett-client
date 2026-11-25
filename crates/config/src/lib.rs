@@ -150,6 +150,8 @@ pub struct Config {
     pub chat_entries: u32,
     /// Nachrichten sanft ausblenden statt sie einfach verschwinden zu lassen.
     pub chat_fade: bool,
+    /// Verlauf bei offener eigener Eingabe.
+    pub chat_history: bool,
     /// Chat wie in der Java Edition.
     pub chat_java: bool,
     /// Früher ein eigener Schalter, heute das Modul „Spielerliste“.
@@ -176,6 +178,7 @@ impl Default for Config {
             menu: Default::default(),
             chat_entries: 10,
             chat_fade: true,
+            chat_history: true,
             chat_java: false,
             tab_list: false,
             zoom: Default::default(),

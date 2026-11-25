@@ -47,6 +47,7 @@ pub struct Editor {
     /// Stand der Chat-Eingabe fürs Menü.
     pub chat_state: &'static str,
     pub panel_state: &'static str,
+    pub history_state: &'static str,
     pub style_state: &'static str,
     pub tab_state: &'static str,
     pub zoom_state: &'static str,
@@ -129,6 +130,7 @@ impl Editor {
             active: None,
             chat_state: "aus",
             panel_state: "aus",
+            history_state: "aus",
             style_state: "aus",
             tab_state: "aus",
             zoom_state: "aus",

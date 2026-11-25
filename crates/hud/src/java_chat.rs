@@ -212,6 +212,37 @@ pub fn native_sample(
     }
 }
 
+/// Verlauf des offenen Chats in den Maßen von Minecrafts Anzeige. `rows` von alt nach neu, `scroll` Zeilen nach oben.
+pub fn history(
+    at: Rect,
+    (unit, n): (f32, Native),
+    rows: &[Row],
+    scroll: usize,
+    advance: &dyn Fn(char) -> f32,
+    out: &mut Vec<Draw>,
+) {
+    let h = n.line * unit;
+    let shown = native_rows(at.h, unit, n);
+    for (i, row) in rows.iter().rev().skip(scroll).take(shown).enumerate() {
+        let y = at.y + at.h - (i + 1) as f32 * h;
+        out.push(Draw::Box { rect: Rect { x: at.x, y, w: at.w, h }, radius: 0.0, color: rgb(0, n.opacity) });
+        text(at.x + n.left * unit, y + n.top * unit, unit, row, 1.0, advance, out);
+    }
+    if rows.len() > shown {
+        let full = shown as f32 * h;
+        let bar = full * shown as f32 / rows.len() as f32;
+        let y = at.y + at.h - bar - full * scroll as f32 / rows.len() as f32;
+        let rect = Rect { x: at.x + at.w - 2.0 * unit, y, w: 2.0 * unit, h: bar };
+        out.push(Draw::Box { rect, radius: 0.0, color: rgb(0xCCCCCC, 0.67) });
+    }
+}
+
+/// Wo man nach dem Blättern steht. Kommen Zeilen dazu, bleibt beim Lesen dieselbe Stelle stehen.
+pub fn scrolled(scroll: usize, before: usize, total: usize, shown: usize, by: i32) -> usize {
+    let added = if scroll > 0 { total.saturating_sub(before) } else { 0 };
+    (scroll + added).saturating_add_signed(by as isize).min(total.saturating_sub(shown))
+}
+
 /// Zeichnet Zeilen von unten nach oben; die letzte in `rows` ist die neueste. `unit` enthält die Größe.
 pub fn draw(
     (at, unit): (Rect, f32),
@@ -312,6 +343,34 @@ mod tests {
         assert_eq!(texts.len(), 4);
         let y = |t| texts.iter().find(|x| x.1 == t).unwrap().0;
         assert_eq!(y("neu") - y("alt"), 27.0);
+    }
+
+    #[test]
+    fn verlauf_blaettert_und_bleibt_im_feld() {
+        let rows: Vec<Row> = (0..50).map(|i| parse(&format!("n{i}"), 0xFFFFFF)).collect();
+        let at = Rect { x: 10.0, y: 100.0, w: 600.0, h: 20.0 * 11.0 * 2.0 };
+        let draw = |scroll| {
+            let mut out = vec![];
+            history(at, (2.0, BEDROCK), &rows, scroll, &six, &mut out);
+            for d in &out {
+                if let Draw::Box { rect: r, .. } = d {
+                    assert!(r.y >= at.y - 0.1 && r.y + r.h <= at.y + at.h + 0.1 && r.x + r.w <= at.x + at.w + 0.1);
+                }
+            }
+            let text = |d: &Draw| if let Draw::Game { text, .. } = d { Some(text.clone()) } else { None };
+            let t: Vec<String> = out.iter().filter_map(text).collect();
+            (t.first().cloned().unwrap(), t.last().cloned().unwrap(), t.len() / 2)
+        };
+        assert_eq!(draw(0), ("n49".into(), "n30".into(), 20));
+        assert_eq!(draw(30), ("n19".into(), "n0".into(), 20));
+        // Blättern endet oben und unten.
+        assert_eq!(scrolled(0, 50, 50, 20, 7), 7);
+        assert_eq!(scrolled(28, 50, 50, 20, 7), 30);
+        assert_eq!(scrolled(3, 50, 50, 20, -7), 0);
+        // Neue Zeilen: unten bleibt unten, oben bleibt die Stelle.
+        assert_eq!(scrolled(0, 50, 52, 20, 0), 0);
+        assert_eq!(scrolled(7, 50, 52, 20, 0), 9);
+        assert_eq!(scrolled(5, 50, 10, 20, 0), 0);
     }
 
     #[test]

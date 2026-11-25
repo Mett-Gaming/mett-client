@@ -2,7 +2,8 @@
 //! ans Plugin. Läuft in einem eigenen Thread.
 use crate::plugins::Plugins;
 use crate::{focus, named};
-use gamemem::options::Options;
+use gamemem::Reader;
+use gamemem::options::{self, Options};
 use hud::zoom::Settings;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -66,6 +67,9 @@ struct Worker {
     found: Option<(u32, Options, (u64, u64))>,
     /// Zuletzt angenommen.
     sent: Want,
+    /// Sichtfeld des Nutzers: zuletzt gelesen, und zuletzt gemerkt.
+    seen: Option<f32>,
+    noted: Option<f32>,
     tries: u32,
     /// Woran es zuletzt lag.
     why: &'static str,
@@ -74,7 +78,18 @@ struct Worker {
 
 impl Worker {
     fn new(state: Arc<Mutex<&'static str>>, plugins: Plugins) -> Self {
-        Self { state, plugins, want: None, found: None, sent: None, tries: 0, why: "", next: Instant::now() }
+        Self {
+            state,
+            plugins,
+            want: None,
+            found: None,
+            sent: None,
+            seen: None,
+            noted: None,
+            tries: 0,
+            why: "",
+            next: Instant::now(),
+        }
     }
 
     fn run(mut self, inbox: Receiver<Option<Want>>) {
@@ -101,6 +116,7 @@ impl Worker {
                 }
                 Err(RecvTimeoutError::Timeout) => {}
             }
+            self.track();
             let state = self.step();
             *self.state.lock().unwrap_or_else(|e| e.into_inner()) = state;
         }
@@ -131,6 +147,22 @@ impl Worker {
             (None, true) => self.why,
             (None, false) => "wird gesucht",
         }
+    }
+
+    /// Das Sichtfeld des Nutzers kann sich im Spiel ändern. Solange die Untergrenze gesenkt ist, gehört der Wert uns.
+    fn track(&mut self) {
+        let (Some(_), Some((pid, o, place))) = (&self.sent, &self.found) else {
+            self.seen = None;
+            return;
+        };
+        let read = Reader::open(*pid).ok().and_then(|r| options::least_and_value(&r, o, *place, FOV));
+        let now = read.filter(|(least, v)| *least >= 1.0 && v.is_finite()).map(|r| r.1);
+        // Zweimal gleich, sonst könnte gerade ein Wechsel dazwischenliegen.
+        if now.is_some() && now == self.seen && now != self.noted {
+            focus::track_zoom(now.unwrap_or_default());
+            self.noted = now;
+        }
+        self.seen = now;
     }
 
     fn turn_on(&mut self, pid: u32, s: &Settings) -> Result<(), &'static str> {
@@ -166,7 +198,11 @@ impl Worker {
 
     fn off(&mut self) {
         if let Some((pid, s)) = self.sent.take() {
-            let _ = self.order(pid, false, &s);
+            // Antwortet das Spiel nicht mehr, bleibt der Zettel zum Zurückstellen.
+            if self.order(pid, false, &s) == Some(0) {
+                focus::untrack_zoom();
+            }
+            self.noted = None;
         }
     }
 }

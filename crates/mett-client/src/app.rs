@@ -93,6 +93,9 @@ pub struct App {
     hints: Hints,
     /// Offen seit.
     chat_open: Option<Instant>,
+    /// Verlauf: Zeilen nach oben geblättert, alle Zeilen und Zeilen im Bild.
+    scroll: (usize, usize, usize),
+    history: &'static str,
     /// Eigene Meldungen im Chat.
     notes: Vec<sources::Line>,
 }
@@ -152,6 +155,8 @@ impl App {
             chat_input: ChatInput::default(),
             hints: Hints::default(),
             chat_open: None,
+            scroll: (0, 0, 0),
+            history: "wartet auf offenen Chat",
             notes: vec![],
         }
     }
@@ -262,6 +267,12 @@ impl App {
             g.want(gear.map(|pid| gear_link::Want { pid, playing, items, effects, bar }));
         }
         let gear = self.gear.as_ref().map_or(["nur beim Start über den Mett Launcher"; 2], GearLink::states);
+        let history = match (&self.link, self.config.chat_input) {
+            (None, _) => "nur beim Start über den Mett Launcher",
+            (_, false) => "Eigene Eingabe ist aus",
+            _ if !self.config.chat_history => "aus",
+            _ => self.history,
+        };
         let held = self.tab;
         let zoom = self.watcher.pid().filter(|_| self.module(Kind::Zoom)).map(|pid| (pid, self.config.zoom.sane()));
         if let Some(z) = &mut self.zoom {
@@ -283,6 +294,7 @@ impl App {
             e.time = self.born.elapsed().as_secs_f32();
             e.style_state = style;
             e.chat_state = state;
+            e.history_state = history;
             e.panel_state = panel;
         }
         self.sync();
@@ -294,8 +306,8 @@ impl App {
         if !self.chat_module() || self.pack_hides {
             return None;
         }
-        // Im Editor stehen dort Beispiele; echte Nachrichten lägen darunter.
-        if self.editor.is_some() {
+        // Im Editor stehen dort Beispiele, bei offenem Chat der Verlauf; echte Nachrichten lägen darunter.
+        if self.editor.is_some() || self.scroll.1 > 0 && self.history_wanted() {
             return Some(Goal::Hide);
         }
         let size = self.screen.as_ref().and_then(Screen::size)?;
@@ -429,6 +441,7 @@ impl App {
         if let Event::Open { command } = e {
             self.chat_input.open(if command { "/" } else { "" });
             self.chat_open = Some(Instant::now());
+            self.scroll = (0, 0, 0);
             self.keys = Keys::default();
             self.hints.clear();
             return;
@@ -443,7 +456,8 @@ impl App {
             Event::Wheel { notches, .. } if self.hints.hit(self.mouse.mouse).is_some() => {
                 self.hints.scroll(notches as i32);
             }
-            Event::Wheel { .. } => {}
+            // Wie in Java sieben Zeilen, mit Umschalt eine.
+            Event::Wheel { notches, shift } => self.scroll_chat(notches as i32 * if shift { 1 } else { 7 }),
             Event::Key { vk, shift, ctrl } => self.chat_key(VIRTUAL_KEY(vk as u16), shift, ctrl),
             Event::Move { x, y } => {
                 self.mouse.mouse = self.in_picture(x, y);
@@ -469,6 +483,16 @@ impl App {
         (x as f32 * w, y as f32 * h)
     }
 
+    fn scroll_chat(&mut self, by: i32) {
+        let (at, total, shown) = self.scroll;
+        self.scroll.0 = java_chat::scrolled(at, total, total, shown, by);
+    }
+
+    /// Nur solange unser Chat offen ist, werden Nachrichten gelesen.
+    fn history_wanted(&self) -> bool {
+        self.chat_open.is_some() && self.config.chat_history && self.chat_module()
+    }
+
     fn chat_key(&mut self, vk: VIRTUAL_KEY, shift: bool, ctrl: bool) {
         let input = &mut self.chat_input;
         let key = match vk {
@@ -491,6 +515,8 @@ impl App {
             }
             VK_V if ctrl => return input.insert(&window::clipboard().unwrap_or_default()),
             VK_TAB => return self.hints.apply(input, shift),
+            VK_PRIOR => return self.scroll_chat(self.scroll.2.max(2) as i32 - 1),
+            VK_NEXT => return self.scroll_chat(1 - self.scroll.2.max(2) as i32),
             // Ist die Liste offen, gehören ihr die Pfeiltasten, sonst dem Verlauf.
             VK_UP if self.hints.open() => return self.hints.step(-1),
             VK_DOWN if self.hints.open() => return self.hints.step(1),
@@ -539,8 +565,8 @@ impl App {
             battery: on(Kind::Battery),
             music: on(Kind::Music),
             ping: on(Kind::Ping).then(|| server.map_or(String::new(), |ip| ip.to_string())),
-            // Minecraft zeigt die Nachrichten selbst; wir lesen sie nicht mehr.
-            chat_pid: None,
+            // Sonst zeigt Minecraft die Nachrichten selbst.
+            chat_pid: self.watcher.pid().filter(|_| self.history_wanted()),
             fps_pid: None,
             commands_pid: self.watcher.pid().filter(|_| self.config.chat_input && self.chat_module()),
         });
@@ -698,6 +724,18 @@ impl App {
         if let Some(e) = &mut self.editor {
             e.native = native;
         }
+        let lines = match &data.chat {
+            Reading::Ready(l) if self.history_wanted() => Some(l.clone()),
+            _ => None,
+        };
+        if self.history_wanted() {
+            self.history = match &data.chat {
+                Reading::Ready(_) => "läuft",
+                Reading::Pending => "wird gesucht",
+                Reading::Off(why) => why,
+            };
+        }
+        let mut scroll = (self.scroll.0, 0, 0);
         let p = self.config.profile();
         for (kind, at) in editor::items(p, screen, dpi, native) {
             let style = &p.style(kind);
@@ -718,6 +756,26 @@ impl App {
                         let count = entries.min(java_chat::native_rows(at.h, size, form));
                         java_chat::native_sample((at.x, at.y + at.h), (at.w, size), (count, form), &advance, &mut out);
                     } else {
+                        if let Some(lines) = lines.as_deref().filter(|l| !l.is_empty()) {
+                            let form = self.java().unwrap_or(java_chat::BEDROCK);
+                            let size = look.map_or(java_chat::unit(screen), |l| l.unit);
+                            let room = (at.w / size - 2.0 * form.left - 2.0).max(1.0);
+                            let rows: Vec<java_chat::Row> = lines
+                                .iter()
+                                .flat_map(|l| java_chat::wrap(&java_chat::parse(&l.text, 0xFFFFFF), room, &advance))
+                                .collect();
+                            // Über der Eingabe, und oben im Bild.
+                            let bottom = (at.y + at.h).min(screen.1 - 16.0 * java_chat::unit(screen)).round();
+                            let h = form.line * size;
+                            let shown = java_chat::native_rows(at.h, size, form).max(java_chat::ROWS_OPEN);
+                            let shown = shown.min((bottom / h) as usize).max(1);
+                            let h = shown as f32 * h;
+                            let place = hud::Rect { y: bottom - h, h, ..at };
+                            let before = if self.scroll.1 == 0 { rows.len() } else { self.scroll.1 };
+                            let now = java_chat::scrolled(scroll.0, before, rows.len(), shown, 0);
+                            scroll = (now, rows.len(), shown);
+                            java_chat::history(place, (size, form), &rows, now, &advance, &mut out);
+                        }
                         // Eigene Meldungen kennt Minecraft nicht; sie stehen darüber.
                         let above = hud::Rect { y: at.y - at.h, ..at };
                         let width = (at.w / unit - java_chat::MARGINS).max(1.0);
@@ -762,6 +820,7 @@ impl App {
             };
             hud::label(at, kind, style, &text, &mut out);
         }
+        self.scroll = scroll;
         if p.modules[&Kind::Armor].enabled && p.armor.sticky && (sample || !self.in_menu || self.chat_open.is_some()) {
             let unit = java_chat::unit(screen);
             // Im Editor liegt die Leiste vielleicht unter einem Menü; dann dort, wo sie üblicherweise ist.
@@ -908,6 +967,7 @@ impl App {
             format!("Zoom: {}, {} (Taste 0x{:02X}, umschalten {})", on(Kind::Zoom), e.zoom_state, z.key, z.toggle),
             format!("Fullbright: {}, {}", on(Kind::Fullbright), e.bright_state),
             format!("Chat: {}, Eingabe {}, Anzeige {}", on(Kind::Chat), e.chat_state, e.panel_state),
+            format!("Verlauf: {}", e.history_state),
             format!("Java-Aussehen: {}", e.style_state),
             format!("Crosshair: {}, {}", on(Kind::Crosshair), e.cross_state),
             format!("AppleSkin: {}, {}", on(Kind::AppleSkin), e.apple_state),

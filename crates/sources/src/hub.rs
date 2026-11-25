@@ -230,7 +230,8 @@ fn chat_loop(s: &Shared) {
                 snap.chat = value;
             }
         }
-        if !pause(s, if chat.is_some() { 100 } else { 1000 }) {
+        // Auch ohne Auftrag kurz: Der Verlauf soll gleich nach dem Öffnen da sein.
+        if !pause(s, 100) {
             return;
         }
     }

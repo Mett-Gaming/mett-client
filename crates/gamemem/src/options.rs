@@ -203,6 +203,15 @@ pub fn locate(r: &Reader, o: &Options, name: &str) -> Option<(u64, u64)> {
     }
 }
 
+/// Untergrenze und Wert. Die Grenzen liegen direkt vor dem Wert.
+pub fn least_and_value(r: &Reader, o: &Options, (at, info): (u64, u64), name: &str) -> Option<(f32, f32)> {
+    get(r, o, (at, info), name)?;
+    let mut b = [0u8; 12];
+    r.read((at + o.value - 8) as usize, &mut b).ok()?;
+    let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+    Some((f(0), f(8)))
+}
+
 /// Aktueller Wert, wenn die Einstellung noch dieselbe ist.
 pub fn get(r: &Reader, o: &Options, (at, info): (u64, u64), name: &str) -> Option<f32> {
     let read: Read = &|at, out| r.read(at as usize, out).is_ok();
@@ -241,6 +250,15 @@ mod tests {
         let more: Vec<_> = (0..40).map(|i| row(i % 12, 500.0)).map(|(n, f)| (n, vec![500.0; f.len()])).collect();
         super::value(&more, &file, &mut trace);
         assert_eq!((trace.known, trace.best), (12, 12));
+        // Ein einziger Unterschied reicht nicht, vier Markierungen des Clients schon.
+        let row_of = |n: usize| -> Vec<_> {
+            (0..93).map(|i| (format!("o{i}"), vec![0.0, 99.0, 5.0 + if i < n { 0.01 } else { 0.0 }, 5.0])).collect()
+        };
+        let file_of = |n: usize| -> HashMap<String, f32> {
+            (0..93).map(|i| (format!("o{i}"), if i < n { 5.01 } else { 5.0 })).collect()
+        };
+        assert_eq!(value(&row_of(1), &file_of(1)), None);
+        assert_eq!(value(&row_of(4), &file_of(4)), Some(0x18));
         // Zu wenige bekannte Namen, oder die Datei passt nicht.
         assert_eq!(value(&mixed[..6], &file), None);
         let other: HashMap<String, f32> = (0..12).map(|i| (format!("o{i}"), 500.0 + i as f32)).collect();

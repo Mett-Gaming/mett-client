@@ -59,6 +59,9 @@ pub fn watch() -> Result<()> {
         WaitForSingleObject(m, INFINITE);
         loop {
             std::thread::sleep(Duration::from_secs(2));
+            if !client_running() && game_running() {
+                focus::untrack_zoom();
+            }
             if !client_running() && !game_running() {
                 // Beim Beenden schreibt Minecraft noch Einstellungen; kurz warten und neu prüfen.
                 std::thread::sleep(Duration::from_secs(3));

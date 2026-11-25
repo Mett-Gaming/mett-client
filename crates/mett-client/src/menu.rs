@@ -314,8 +314,11 @@ impl Editor {
         if ui.button(cell(b, 7, 0, 3, s), "Größe zurücksetzen", false) {
             (m.place.scale, m.place.w, m.place.h) = (1.0, 1.0, 1.0);
         }
+        ui.toggle(line(b, 8, s), "Verlauf bei offenem Chat (liest Nachrichten nur so lange)", &mut c.chat_history);
+        let state = format!("{}: {}", t("Verlauf"), t(self.history_state));
+        ui.text(line(b, 9, s), 12.0, ui.look.bright(), Align::Left, state);
         let hint = "Nachrichten zeigt Minecraft selbst, hierher verschoben. Breite und Höhe ziehst du am Rand.";
-        ui.text(line(b, 8, s), 12.0, ui.look.muted, Align::Left, hint);
+        ui.text(line(b, 10, s), 12.0, ui.look.muted, Align::Left, hint);
         Action::None
     }
 
