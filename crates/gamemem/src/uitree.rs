@@ -475,6 +475,67 @@ impl Crosshair {
     }
 }
 
+/// Merker „selbst sichtbar“ und „samt Eltern sichtbar“.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Visible {
+    pub own: u32,
+    pub all: u32,
+}
+
+/// Aus allen Elementen gelernt: Ein Element ist samt Eltern sichtbar, wenn es selbst und sein Elternteil es sind, und
+/// alles Ausgerechnete ist sichtbar. Passt mehr als ein Paar, gilt keines.
+pub fn visible(r: &Reader, l: &Layout) -> Option<Visible> {
+    let read: Read = &|at, out| r.read(at as usize, out).is_ok();
+    let found = r.scan(&|at, b| {
+        let table = l.table.to_le_bytes();
+        let o = (0..b.len().saturating_sub(SPAN)).step_by(8);
+        o.filter(|o| b[*o..*o + 8] == table).map(|o| ((at + o) as u64, b[o..o + SPAN].to_vec())).collect()
+    });
+    let all: HashMap<u64, Vec<u8>> = found.into_iter().collect();
+    let mut lists: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut pairs = vec![];
+    for (at, b) in &all {
+        let up = long(b, l.parent);
+        let Some(p) = all.get(&up) else { continue };
+        // Nur was die Eltern auch als Kind führen.
+        let list = lists.entry(up).or_insert_with(|| children(read, p, l.children, l.half).unwrap_or_default());
+        if list.contains(at) {
+            pairs.push((short(p, l.flags), short(b, l.flags)));
+        }
+    }
+    learn_visible(&pairs, l.bit)
+}
+
+/// Merker von Elternteil und Kind; `dirty`: noch nicht ausgerechnet.
+fn learn_visible(pairs: &[(u32, u32)], dirty: u32) -> Option<Visible> {
+    let clean = pairs.iter().filter(|(p, c)| (p | c) & dirty == 0);
+    let shown = clean.clone().fold(!dirty, |m, (p, c)| m & p & c);
+    let bits: Vec<u32> = (0..32).map(|i| 1 << i).filter(|b| shown & b != 0).collect();
+    let mut fits = vec![];
+    for own in &bits {
+        for all in bits.iter().filter(|a| *a != own) {
+            let is = |f: u32, b: &u32| f & b != 0;
+            // Alle drei Fälle müssen oft genug vorkommen: gezeigt, selbst versteckt, mit den Eltern versteckt.
+            let mut seen = [0usize; 3];
+            let mut wrong = 0;
+            for (p, c) in pairs {
+                let (up, me, whole) = (is(*p, all), is(*c, own), is(*c, all));
+                match (up && me) == whole {
+                    true if whole => seen[0] += 1,
+                    true if up => seen[1] += 1,
+                    true if me => seen[2] += 1,
+                    true => {}
+                    false => wrong += 1,
+                }
+            }
+            if seen.iter().all(|n| *n >= ENOUGH) && wrong * 100 <= pairs.len() {
+                fits.push(Visible { own: *own, all: *all });
+            }
+        }
+    }
+    only(fits.into_iter()).filter(|_| clean.count() >= ENOUGH)
+}
+
 /// Das eine Fadenkreuz der offenen Welt.
 pub fn crosshair(r: &Reader, l: &Layout) -> Option<Crosshair> {
     let read: Read = &|at, out| r.read(at as usize, out).is_ok();
@@ -670,6 +731,25 @@ mod tests {
             g.put(at, o, &[0xEE]);
             assert_eq!(found(&g), None, "{at:x} {o:x}");
         }
+    }
+
+    #[test]
+    fn sichtbarkeit_wird_aus_der_regel_gelernt() {
+        // Zeigen: 4 und 16; 1 ist „noch nicht ausgerechnet“, 8 ist immer gesetzt.
+        let mut pairs = vec![];
+        for _ in 0..50 {
+            pairs.extend([(0x1C, 0x1C), (0x1C, 0x09), (0x09, 0x0D), (0x0D, 0x0D), (0x1C, 0x1D)]);
+        }
+        assert_eq!(learn_visible(&pairs, 1), Some(Visible { own: 4, all: 16 }));
+        // Ein paar Ausreißer während einer Umstellung schaden nicht.
+        pairs.push((0x1C, 0x0D));
+        assert_eq!(learn_visible(&pairs, 1), Some(Visible { own: 4, all: 16 }));
+        // Ohne versteckte Elemente lässt sich nichts unterscheiden.
+        assert_eq!(learn_visible(&[(0x1C, 0x1C); 100], 1), None);
+        // Zwei gleichwertige Merker: lieber nichts.
+        let double: Vec<_> = pairs.iter().map(|(p, c)| (p | (p & 4) << 4, c | (c & 4) << 4)).collect();
+        assert_eq!(learn_visible(&double, 1), None);
+        assert_eq!(learn_visible(&[], 1), None);
     }
 
     #[test]

@@ -1,8 +1,9 @@
 //! Blendet Minecrafts Fadenkreuz aus, solange das eigene gezeigt wird. Läuft in einem eigenen Thread.
 use crate::plugins::Plugins;
 use gamemem::Reader;
-use gamemem::uitree::{self, Crosshair, Layout};
-use mett_plugin::panel::{Offsets, Order, PLUGIN, Wish, answer};
+use gamemem::uitree::{self, Crosshair, Layout, Visible};
+use mett_plugin::cross::Order;
+use mett_plugin::panel::{PLUGIN, answer};
 use std::ops::Range;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -58,6 +59,7 @@ struct Game {
     reader: Reader,
     image: Range<u64>,
     layout: Option<Layout>,
+    visible: Option<Visible>,
 }
 
 struct Worker {
@@ -109,25 +111,25 @@ impl Worker {
 
     fn release(&mut self) {
         if let Some(c) = self.hidden.take() {
-            let _ = self.order(&c, Wish::Release);
+            let _ = self.order(&c, false);
         }
     }
 
-    fn order(&self, c: &Crosshair, wish: Wish) -> Option<u32> {
+    fn order(&self, c: &Crosshair, hide: bool) -> Option<u32> {
         let g = self.game.as_ref()?;
-        let l = g.layout?;
-        let offsets = Offsets {
+        let (l, v) = (g.layout?, g.visible?);
+        let o = Order {
+            client: std::process::id(),
+            hide,
+            at: c.at,
+            parent: c.parent,
+            table: l.table,
             name: l.name,
-            place: l.place,
-            size: l.size,
+            up: l.parent,
             flags: l.flags,
-            bit: l.bit as u64,
-            parent: l.parent,
-            children: l.children,
-            half: l.half,
-            ..Default::default()
+            own: v.own,
+            all: v.all,
         };
-        let o = Order { client: std::process::id(), at: c.at, parent: c.parent, table: l.table, offsets, wish };
         let dll = self.plugins.path(PLUGIN)?;
         mett_inject::call_export_text(g.pid, &dll, s!("mett_cursor_order"), &o.encode()).ok()
     }
@@ -156,7 +158,7 @@ impl Worker {
         if self.game.is_none() {
             let image = gamemem::image_range(pid).map_err(|_| "Spiel nicht lesbar")?;
             let reader = Reader::open_for_scan(pid).map_err(|_| "Spiel nicht lesbar")?;
-            self.game = Some(Game { pid, reader, image, layout: None });
+            self.game = Some(Game { pid, reader, image, layout: None, visible: None });
         }
         let Some(g) = &mut self.game else { return Ok(()) };
         if g.layout.is_none() {
@@ -164,8 +166,12 @@ impl Worker {
         }
         let l = g.layout.ok_or("Aufbau der Oberfläche nicht eindeutig erkannt")?;
         let c = uitree::crosshair(&g.reader, &l).ok_or("nicht eindeutig gefunden")?;
+        if g.visible.is_none() {
+            g.visible = uitree::visible(&g.reader, &l);
+        }
+        g.visible.ok_or("Merker „sichtbar“ nicht eindeutig erkannt")?;
         self.plugins.load(pid, PLUGIN)?;
-        match self.order(&c, Wish::Hide) {
+        match self.order(&c, true) {
             Some(answer::OK) => {
                 self.hidden = Some(c);
                 Ok(())

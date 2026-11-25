@@ -45,9 +45,9 @@ fn cursor_step(restore: bool) {
     let mut cursor = lock(&CURSOR);
     let Some(c) = &mut *cursor else { return };
     if restore {
-        c.order.wish = Wish::Release;
+        c.order.hide = false;
     }
-    if !c.step() || c.order.wish == Wish::Release {
+    if !c.step() || !c.order.hide {
         *cursor = None;
     }
 }
@@ -184,27 +184,26 @@ pub unsafe extern "system" fn mett_cursor_order(text: *const u16) -> u32 {
             return answer::BAD_ORDER;
         }
         let text = unsafe { PCWSTR(text).to_string() }.unwrap_or_default();
-        let Some(o) = Order::decode(&text) else { return answer::BAD_ORDER };
+        let Some(o) = mett_plugin::cross::Order::decode(&text) else { return answer::BAD_ORDER };
         let (base, size) = (IMAGE[0].load(SeqCst), IMAGE[1].load(SeqCst));
-        if !(base..base + size).contains(&o.table) || matches!(o.wish, Wish::Place { .. }) {
+        if !(base..base + size).contains(&o.table) {
             return answer::BAD_ORDER;
         }
         {
             let mut cursor = lock(&CURSOR);
             match &mut *cursor {
-                // Die gemerkte Lage des Spiels bleibt.
                 Some(c) if (c.order.at, c.order.parent) == (o.at, o.parent) => c.order = o,
                 // Erst muss das alte Element zurückgestellt sein.
                 Some(c) => {
-                    c.order.wish = Wish::Release;
+                    c.order.hide = false;
                     return answer::STALE;
                 }
-                None if o.wish == Wish::Release => return answer::OK,
+                None if !o.hide => return answer::OK,
                 None => *cursor = Some(Cursor::new(o)),
             }
         }
         tell(false);
-        if lock(&CURSOR).is_some() == (o.wish == Wish::Hide) { answer::OK } else { answer::STALE }
+        if lock(&CURSOR).is_some() == o.hide { answer::OK } else { answer::STALE }
     })
     .unwrap_or(answer::BAD_ORDER)
 }

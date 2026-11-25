@@ -9,9 +9,6 @@ pub const LIST: &str = "stack_panel";
 pub const ROW: &str = "chat_grid_item";
 pub const BACKGROUND: &str = "chat_background";
 pub const TEXT: &str = "chat_text";
-/// Minecrafts Fadenkreuz und sein Bildschirm.
-pub const CROSSHAIR: &str = "cursor";
-pub const CROSSHAIR_SCREEN: &str = "hud_crosshair_screen";
 pub const MAX_ROWS: u32 = 200;
 
 pub mod answer {

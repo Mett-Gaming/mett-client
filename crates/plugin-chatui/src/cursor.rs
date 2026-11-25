@@ -1,21 +1,18 @@
-//! Minecrafts Fadenkreuz aus dem Bild rücken und zurückstellen. Vor jedem Schreiben Klasse und Namen prüfen. Nur im
-//! Hauptthread benutzen.
+//! Minecrafts Fadenkreuz aus- und einblenden. Vor jedem Schreiben Klasse und Namen prüfen. Nur im Hauptthread benutzen.
 use crate::panel::{usable, word};
-use mett_plugin::panel::{CROSSHAIR, CROSSHAIR_SCREEN, Order, Wish};
+use mett_plugin::cross::{NAME, Order, SCREEN};
 
-/// Weit außerhalb des Bildschirms.
-const AWAY: f32 = -5000.0;
 const END: u64 = 0x190;
 
 pub struct Cursor {
     pub order: Order,
-    /// Lage des Spiels.
-    original: Option<f32>,
+    /// Unsere Änderung gilt gerade.
+    hidden: bool,
 }
 
 impl Cursor {
     pub fn new(order: Order) -> Self {
-        Self { order, original: None }
+        Self { order, hidden: false }
     }
 
     /// Kurze Namen stehen im Element selbst, lange daneben.
@@ -23,22 +20,19 @@ impl Cursor {
         if !usable(at, END) || unsafe { word(at) } != self.order.table {
             return false;
         }
-        let text = at + self.order.offsets.name;
+        let text = at + self.order.name;
         let (len, room) = unsafe { (word(text + 16), word(text + 24)) };
         if len != name.len() as u64 || room < len {
             return false;
         }
         let start = if room < 16 { text } else { unsafe { word(text) } };
-        // Auch ein ungerader Anfang wäre lesbar; der Speicher davor wird mitgeprüft.
         usable(start & !7, len + 8)
             && unsafe { std::slice::from_raw_parts(start as *const u8, name.len()) == name.as_bytes() }
     }
 
     fn same(&self) -> bool {
-        let (o, at) = (&self.order.offsets, self.order.at);
-        self.is(at, CROSSHAIR)
-            && unsafe { word(at + o.parent) } == self.order.parent
-            && self.is(self.order.parent, CROSSHAIR_SCREEN)
+        let o = &self.order;
+        self.is(o.at, NAME) && unsafe { word(o.at + o.up) } == o.parent && self.is(o.parent, SCREEN)
     }
 
     /// Ein Schritt. `false`: passt nicht mehr, nie wieder anfassen.
@@ -46,27 +40,20 @@ impl Cursor {
         if !self.same() {
             return false;
         }
-        let o = &self.order.offsets;
-        let place = (self.order.at + o.place) as *mut f32;
-        let now = unsafe { place.read() };
-        if !now.is_finite() || now.abs() > 20_000.0 {
-            return false;
-        }
-        if now != AWAY {
-            // Hat das Spiel neu gerechnet, ist das die neue Ausgangslage.
-            self.original = Some(now);
-        }
-        let Some(original) = self.original else {
-            // Schon weggerückt, aber die alte Lage ist unbekannt: Das Spiel soll selbst rechnen.
-            return false;
-        };
-        let to = if self.order.wish == Wish::Hide { AWAY } else { original };
-        if to != now {
-            unsafe {
-                place.write(to);
-                let flags = (self.order.at + o.flags) as *mut u32;
-                flags.write(flags.read() | o.bit as u32);
+        let o = &self.order;
+        let both = o.own | o.all;
+        let flags = (o.at + o.flags) as *mut u32;
+        let now = unsafe { flags.read() };
+        if o.hide {
+            // Blendet Minecraft es wieder ein, gleich noch einmal. Was es selbst ausblendet, bleibt seine Sache.
+            if now & o.own != 0 {
+                unsafe { flags.write(now & !both) };
+                self.hidden = true;
             }
+        } else if std::mem::take(&mut self.hidden) && now & both == 0 {
+            // Nur einblenden, was wir ausgeblendet haben, und nur so weit wie der Bildschirm selbst.
+            let up = unsafe { ((o.parent + o.flags) as *const u32).read() };
+            unsafe { flags.write(now | o.own | (up & o.all)) };
         }
         true
     }
@@ -75,7 +62,6 @@ impl Cursor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mett_plugin::panel::Offsets;
     use windows::Win32::System::Memory::*;
 
     const TABLE: u64 = 0x7000;
@@ -88,55 +74,81 @@ mod tests {
             let (at, parent, text) = (m, m + 0x400, m + 0x1000);
             put(at, TABLE);
             put(parent, TABLE);
-            std::ptr::copy_nonoverlapping(CROSSHAIR.as_ptr(), (at + 0x30) as *mut u8, CROSSHAIR.len());
-            put(at + 0x40, CROSSHAIR.len() as u64);
+            // Hinter dem Namen stehen Reste.
+            std::ptr::copy_nonoverlapping(b"cursor\0eld".as_ptr(), (at + 0x30) as *mut u8, 10);
+            put(at + 0x40, NAME.len() as u64);
             put(at + 0x48, 15);
             put(at + 0xA0, parent);
             std::ptr::copy_nonoverlapping(screen.as_ptr(), text as *mut u8, screen.len());
             put(parent + 0x30, text);
             put(parent + 0x40, screen.len() as u64);
             put(parent + 0x48, 31);
-            ((at + 0x60) as *mut f32).write(419.0);
-            let offsets = Offsets {
+            put(at + 0x28, 0x7C);
+            put(parent + 0x28, 0x7E);
+            let order = Order {
+                client: 1,
+                hide: true,
+                at,
+                parent,
+                table: TABLE,
                 name: 0x30,
-                place: 0x60,
-                size: 0x70,
+                up: 0xA0,
                 flags: 0x28,
-                bit: 1,
-                parent: 0xA0,
-                children: 0xA8,
-                half: 0,
-                ..Default::default()
+                own: 4,
+                all: 16,
             };
-            (m, Order { client: 1, at, parent, table: TABLE, offsets, wish: Wish::Hide })
+            (m, order)
         }
     }
 
-    fn x(m: u64) -> f32 {
-        unsafe { ((m + 0x60) as *const f32).read() }
+    fn flags(m: u64) -> u32 {
+        unsafe { ((m + 0x28) as *const u32).read() }
+    }
+
+    fn set(m: u64, v: u32) {
+        unsafe { ((m + 0x28) as *mut u32).write(v) }
     }
 
     #[test]
-    fn rueckt_weg_und_kommt_zurueck() {
-        let (m, order) = setup(CROSSHAIR_SCREEN);
+    fn blendet_aus_und_wieder_ein() {
+        let (m, order) = setup(SCREEN);
         let mut c = Cursor::new(order);
-        assert!(c.step() && x(m) == AWAY);
-        assert_eq!(unsafe { ((m + 0x28) as *const u32).read() }, 1);
-        // Das Spiel rechnet neu.
-        unsafe { ((m + 0x60) as *mut f32).write(300.0) };
-        assert!(c.step() && x(m) == AWAY);
-        c.order.wish = Wish::Release;
-        assert!(c.step() && x(m) == 300.0);
+        assert!(c.step() && flags(m) == 0x68);
+        // Minecraft blendet es neu ein.
+        set(m, 0x7C);
+        assert!(c.step() && flags(m) == 0x68);
+        c.order.hide = false;
+        assert!(c.step() && flags(m) == 0x7C);
+        // Ein zweites Mal passiert nichts mehr.
+        set(m, 0x68);
+        assert!(c.step() && flags(m) == 0x68);
+    }
+
+    #[test]
+    fn was_minecraft_selbst_ausblendet_bleibt_aus() {
+        let (m, order) = setup(SCREEN);
+        set(m, 0x68);
+        let mut c = Cursor::new(order);
+        assert!(c.step());
+        c.order.hide = false;
+        assert!(c.step() && flags(m) == 0x68);
+        // Ist der ganze Bildschirm ausgeblendet, bleibt es das auch.
+        set(m, 0x7C);
+        let mut c = Cursor::new(order);
+        assert!(c.step());
+        set(m + 0x400, 0x6E);
+        c.order.hide = false;
+        assert!(c.step() && flags(m) == 0x6C);
     }
 
     #[test]
     fn fremde_elemente_bleiben_unberuehrt() {
         let (m, order) = setup("hud_crosshair_other!");
-        assert!(!Cursor::new(order).step() && x(m) == 419.0);
-        let (m, order) = setup(CROSSHAIR_SCREEN);
-        assert!(!Cursor::new(Order { table: 1, ..order }).step() && x(m) == 419.0);
-        assert!(!Cursor::new(Order { parent: m + 0x800, ..order }).step() && x(m) == 419.0);
+        assert!(!Cursor::new(order).step() && flags(m) == 0x7C);
+        let (m, order) = setup(SCREEN);
+        assert!(!Cursor::new(Order { table: 1, ..order }).step() && flags(m) == 0x7C);
+        assert!(!Cursor::new(Order { parent: m + 0x800, ..order }).step() && flags(m) == 0x7C);
         unsafe { (m as *mut u64).write(0) };
-        assert!(!Cursor::new(order).step() && x(m) == 419.0);
+        assert!(!Cursor::new(order).step() && flags(m) == 0x7C);
     }
 }

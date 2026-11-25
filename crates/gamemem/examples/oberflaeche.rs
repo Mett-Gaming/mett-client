@@ -10,6 +10,7 @@ fn main() {
     let l = uitree::layout(&r, &(base..base + bytes.len() as u64));
     println!("{l:x?} nach {:?}", t.elapsed());
     let t = Instant::now();
+    println!("Sichtbar {:x?}", l.and_then(|l| uitree::visible(&r, &l)));
     println!("Fadenkreuz {:x?}", l.and_then(|l| uitree::crosshair(&r, &l)));
     println!("{:?} nach {:?}", l.and_then(|l| uitree::panel(&r, &l)), t.elapsed());
 }

@@ -1,6 +1,7 @@
 //! Schnittstelle zwischen Loader, Kern und Plugins (nach dem Vorbild von SKSE: erst fragen, dann laden).
 
 pub mod chat;
+pub mod cross;
 pub mod panel;
 pub mod style;
 
